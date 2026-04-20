@@ -13,8 +13,14 @@ def parse_error_body(text: str) -> str | None:
         data = json.loads(text)
     except json.JSONDecodeError:
         return None
-    if isinstance(data, dict) and "error" in data:
+    if not isinstance(data, dict):
+        return None
+    if data.get("message"):
+        return str(data["message"])
+    if "error" in data:
         err = data["error"]
+        if err == "http_error" and data.get("message"):
+            return str(data["message"])
         return str(err) if err is not None else None
     return None
 

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 from typing import Any
 
 import httpx
@@ -14,6 +18,7 @@ from rich.console import Console
 from nepher_cli.http_util import parse_error_body, request_json
 
 console = Console(stderr=True)
+BTCLI_SIGN_TIMEOUT_SECONDS = 120
 
 
 def _api_paths(base: str) -> tuple[str, str]:
@@ -31,6 +36,72 @@ def validate_api_key_format(api_key: str) -> None:
             "Copy the key from your Nepher account settings."
         )
         raise SystemExit(1)
+
+
+def _extract_btcli_payload(stdout_text: str, original_message: str) -> dict[str, Any] | None:
+    """Parse btcli output across json/dict variants and normalize keys."""
+    data: dict[str, Any] | None = None
+
+    try:
+        parsed = json.loads(stdout_text or "{}")
+        if isinstance(parsed, dict):
+            data = parsed
+    except json.JSONDecodeError:
+        data = None
+
+    if data is None:
+        try:
+            parsed = ast.literal_eval(stdout_text.strip())
+            if isinstance(parsed, dict):
+                data = parsed
+        except (SyntaxError, ValueError):
+            data = None
+
+    if data is None:
+        matches = list(re.finditer(r"\{.*?\}", stdout_text, flags=re.DOTALL))
+        for m in reversed(matches):
+            blob = m.group(0)
+            try:
+                parsed = json.loads(blob)
+            except json.JSONDecodeError:
+                try:
+                    parsed = ast.literal_eval(blob)
+                except (SyntaxError, ValueError):
+                    continue
+            if isinstance(parsed, dict):
+                data = parsed
+                break
+
+    if data is None:
+        # Fallback for btcli text that mixes prompts and wraps values across lines.
+        sig_m = re.search(
+            r"""['"]signed_message['"]\s*:\s*['"]([0-9a-fA-F\s]+)['"]""",
+            stdout_text,
+            flags=re.DOTALL,
+        )
+        addr_m = re.search(
+            r"""['"]signer_address['"]\s*:\s*['"]([1-9A-HJ-NP-Za-km-z]+)['"]""",
+            stdout_text,
+            flags=re.DOTALL,
+        )
+        if sig_m and addr_m:
+            # Some terminal outputs insert hard wraps in long hex payloads.
+            signed_message = re.sub(r"\s+", "", sig_m.group(1))
+            data = {
+                "signed_message": signed_message,
+                "signer_address": addr_m.group(1).strip(),
+            }
+
+    if not data:
+        return None
+
+    if "signature" not in data and "signed_message" in data:
+        data["signature"] = data["signed_message"]
+    if "address" not in data and "signer_address" in data:
+        data["address"] = data["signer_address"]
+    if "message" not in data:
+        data["message"] = original_message
+    return data
 
 
 def run_btcli_sign(wallet_name: str, message: str) -> dict[str, Any]:
@@ -54,41 +125,63 @@ def run_btcli_sign(wallet_name: str, message: str) -> dict[str, Any]:
         "--json-output",
     ]
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             stdin=sys.stdin,
-            stderr=sys.stderr,
+            stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            text=True,
-            check=False,
+            text=False,
         )
     except OSError as e:
         console.print(f"[red]btcli signing failed[/red] — could not run btcli: {e}")
         raise SystemExit(1) from e
 
-    if proc.returncode != 0:
-        out = (proc.stdout or "").strip()
-        if "not found" in out.lower() or "does not exist" in out.lower():
-            console.print(
-                "[red]btcli signing failed — wallet not found[/red]. "
-                "Check the wallet name; run [code]btcli wallet list[/code]."
-            )
-        elif proc.returncode != 0:
-            console.print(
-                "[red]btcli signing failed[/red] — wrong password or signing error. "
-                "Re-run and enter the correct wallet password."
-            )
-        raise SystemExit(1)
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+
+    def _pump(pipe: Any, sink: list[bytes], echo: bool) -> None:
+        if pipe is None:
+            return
+        try:
+            fd = pipe.fileno()
+            while True:
+                chunk = os.read(fd, 1024)
+                if not chunk:
+                    break
+                sink.append(chunk)
+                if echo:
+                    sys.stderr.buffer.write(chunk)
+                    sys.stderr.buffer.flush()
+        finally:
+            pipe.close()
+
+    t_out = threading.Thread(target=_pump, args=(proc.stdout, stdout_chunks, True), daemon=True)
+    t_err = threading.Thread(target=_pump, args=(proc.stderr, stderr_chunks, True), daemon=True)
+    t_out.start()
+    t_err.start()
 
     try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        console.print("[red]btcli signing failed[/red] — could not parse JSON from btcli stdout.")
-        raise SystemExit(1) from None
+        proc.wait(timeout=BTCLI_SIGN_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        t_out.join(timeout=1)
+        t_err.join(timeout=1)
+        raise SystemExit(1)
+
+    t_out.join(timeout=2)
+    t_err.join(timeout=2)
+    out = b"".join(stdout_chunks).decode("utf-8", errors="replace")
+
+    if proc.returncode != 0:
+        raise SystemExit(1)
+
+    data = _extract_btcli_payload(out, message)
+    if data is None:
+        raise SystemExit(1)
 
     for key in ("message", "address", "signature"):
         if key not in data:
-            console.print(f"[red]btcli output missing '{key}'[/red]")
             raise SystemExit(1)
     return data
 
@@ -114,13 +207,6 @@ def register_coldkey(wallet: str, api_key: str, base_url: str) -> int:
         except json.JSONDecodeError:
             console.print("[red]Unexpected response from account backend[/red] (invalid JSON).")
             return 1
-        if isinstance(body, dict) and body.get("status") == "already_registered":
-            ck = body.get("coldkey", "?")
-            console.print(
-                f"[green]A coldkey is already registered for this account.[/green]\n"
-                f"  Coldkey: [bold]{ck}[/bold]"
-            )
-            return 0
         msg = body.get("message") if isinstance(body, dict) else None
         if not msg or not isinstance(msg, str):
             console.print("[red]Unexpected challenge response[/red] (missing message).")
@@ -132,9 +218,14 @@ def register_coldkey(wallet: str, api_key: str, base_url: str) -> int:
 
     console.print(f"Signing with wallet [bold]{wallet}[/bold]...")
     console.print(
-        "[dim]btcli may prompt for your wallet password — enter it when asked.[/dim]"
+        "[dim]Passing through btcli output and prompts below. "
+        "Respond directly in this terminal when btcli asks for input.[/dim]"
     )
-    signed = run_btcli_sign(wallet, msg)
+    try:
+        signed = run_btcli_sign(wallet, msg)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted — coldkey registration was not completed.[/yellow]")
+        return 130
 
     console.print("Submitting to backend...")
     payload = {"api_key": api_key, "signed_payload": signed}
@@ -157,9 +248,19 @@ def register_coldkey(wallet: str, api_key: str, base_url: str) -> int:
         if isinstance(vb, dict):
             st = vb.get("status")
             ck = vb.get("coldkey", "?")
-            if st in ("registered", "already_registered"):
-                console.print("[green]Coldkey registered successfully.[/green]")
+            replaced = vb.get("replaced") is True
+            if st == "registered":
+                if replaced:
+                    console.print("[green]Coldkey updated successfully.[/green]")
+                else:
+                    console.print("[green]Coldkey registered successfully.[/green]")
                 console.print(f"  Coldkey: [bold]{ck}[/bold]")
+                return 0
+            if st == "already_registered":
+                console.print(
+                    "[green]This coldkey is already registered on your account.[/green]\n"
+                    f"  Coldkey: [bold]{ck}[/bold]"
+                )
                 return 0
 
     err = parse_error_body(vr.text) or vr.text.strip() or f"HTTP {vr.status_code}"
