@@ -37,7 +37,7 @@ Use a key from **Account → API Keys** that is:
 ### Submit to active hackathon
 
 ```bash
-nepher-cli --service hackathon submit --apikey <nepher_api_key> --file submission.zip --assets assets.zip
+nepher-cli --service hackathon submit --apikey <nepher_api_key> --submission submission.zip --assets assets.zip
 ```
 
 Optional: `--public-source` maps to `submitter_public_source` when the backend supports it.
@@ -76,7 +76,7 @@ nepher-cli --service account register-coldkey --wallet mywallet --apikey nepher_
 ```bash
 # Staging preset
 export NEPHER_CLI_ENV=staging
-nepher-cli --service hackathon submit --apikey nepher_xxx --file submission.zip --assets assets.zip
+nepher-cli --service hackathon submit --apikey nepher_xxx --submission submission.zip --assets assets.zip
 ```
 
 ```bash

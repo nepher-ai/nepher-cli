@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subp.add_argument("--apikey", required=True, help="Nepher API key.")
     subp.add_argument(
-        "--file",
+        "--submission",
         required=True,
         metavar="PATH",
         dest="submission",

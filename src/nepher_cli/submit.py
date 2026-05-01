@@ -31,11 +31,11 @@ def validate_api_key_format(api_key: str) -> None:
 
 
 def _preflight_url(base: str) -> str:
-    return f"{base.rstrip('/')}/api/v1/hackathon/submit/preflight"
+    return f"{base.rstrip('/')}/api/v1/hackathon/submit/preflight/"
 
 
 def _upload_url(base: str) -> str:
-    return f"{base.rstrip('/')}/api/v1/hackathon/submit/upload"
+    return f"{base.rstrip('/')}/api/v1/hackathon/submit/upload/"
 
 
 def _assert_zip(path: Path, label: str) -> zipfile.ZipFile:
