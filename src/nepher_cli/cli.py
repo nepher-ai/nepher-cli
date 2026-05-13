@@ -14,7 +14,7 @@ from nepher_cli.submit import submit
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="nepher-cli",
-        description="Nepher command-line tools — account (coldkey) and hackathon (submit).",
+        description="Nepher command-line tools — account (coldkey) and hackathon (submit; no coldkey required).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(

@@ -1,6 +1,6 @@
 # nepher-cli
 
-Command-line interface for Nepher — **`--service account`** (coldkey registration) and **`--service hackathon`** (zip submission). Behavior matches the internal product spec (`internal-docs/Hackathon/2. Python CLI SDK.md`).
+Command-line interface for Nepher — **`--service account`** (coldkey registration) and **`--service hackathon`** (zip submission; no coldkey required). Behavior matches the internal product spec (`internal-docs/Hackathon/2. Python CLI SDK.md`).
 
 ## Install
 
@@ -39,6 +39,10 @@ Use a key from **Account → API Keys** that is:
 ```bash
 nepher-cli --service hackathon submit --apikey <nepher_api_key> --submission submission.zip --assets assets.zip
 ```
+
+You do **not** need a registered Bittensor coldkey to submit. A coldkey is only used for stake-weighted voting when an event uses open community scoring.
+
+After preflight and again after a successful upload, the CLI prints how many submission attempts you have left for this hackathon.
 
 Optional: `--public-source` maps to `submitter_public_source` when the backend supports it.
 

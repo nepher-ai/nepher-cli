@@ -14,6 +14,17 @@ from nepher_cli.http_util import parse_error_body, request_json
 
 console = Console(stderr=True)
 
+
+def _print_quota_line(prefix: str, body: dict[str, Any]) -> None:
+    rem = body.get("submissions_remaining")
+    max_n = body.get("max_submissions_per_user")
+    used = body.get("submission_attempts_used")
+    if isinstance(rem, int) and isinstance(max_n, int) and isinstance(used, int):
+        console.print(
+            f"{prefix}: [bold]{rem}[/bold] of {max_n} upload attempt(s) remaining ({used} used successfully)."
+        )
+
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 VIDEO_EXTS = {".mp4", ".webm", ".mov"}
 PDF_EXTS = {".pdf"}
@@ -214,6 +225,8 @@ def submit(
     console.print("Validating assets.zip against hackathon limits...")
     check_assets_against_limits(assets_scan, limits)
 
+    _print_quota_line("Eligible now", pre_body)
+
     sub_mb = submission_path.stat().st_size / (1024 * 1024)
     ast_mb = assets_path.stat().st_size / (1024 * 1024)
     console.print(
@@ -265,6 +278,7 @@ def submit(
             console.print(f"  Status: {st} (pending review)")
             if msg:
                 console.print(f"  {msg}")
+            _print_quota_line("Remaining after this upload", ub)
             console.print(
                 "\n[dim]Your submission is now being reviewed. "
                 "Check your dashboard for updates.[/dim]"
