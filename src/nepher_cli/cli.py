@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subp = sub.add_parser(
         "submit",
-        help="Upload submission.zip and assets.zip (pick hackathon if several are open).",
+        help="Upload project + assets (directories zipped automatically; pick hackathon if several are open).",
     )
     subp.add_argument("--apikey", required=True, help="Nepher API key.")
     subp.add_argument(
@@ -54,20 +54,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="UUID",
         dest="hackathon_id",
-        help="Hackathon UUID when more than one event is accepting submissions.",
+        help=(
+            "Hackathon UUID to submit to. Required when several published events are in the "
+            "submission phase; omit when only one is open (preflight picks it). "
+            "Copy from the dashboard URL or the list printed on preflight error."
+        ),
     )
     subp.add_argument(
         "--submission",
         required=True,
-        metavar="PATH",
+        metavar="DIR",
         dest="submission",
-        help="Path to submission.zip (project source).",
+        help="Path to project folder (or submission.zip). Folder is validated and zipped before upload.",
     )
     subp.add_argument(
         "--assets",
         required=True,
-        metavar="PATH",
-        help="Path to assets.zip (images, videos, PDFs).",
+        metavar="DIR",
+        help="Path to assets folder (or assets.zip): images, videos, PDFs only.",
+    )
+    subp.add_argument(
+        "--title",
+        required=True,
+        help="Submission title (required, max 200 characters; shown on your entry page).",
+    )
+    subp.add_argument(
+        "--description",
+        default="",
+        help="Submission description as Markdown (optional; shown on your entry page).",
     )
     subp.add_argument(
         "--public-source",
@@ -99,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.submission),
         Path(args.assets),
         base,
+        title=args.title,
+        description=args.description,
         public_source=args.public_source,
         hackathon_id=args.hackathon_id,
     )
