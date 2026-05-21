@@ -34,10 +34,13 @@ Use a key from **Account → API Keys** that is:
 - **Active** — disabled / revoked keys are rejected.
 - **Allowed for Hackathon when scoped** — if you limited the key to specific products, enable **Hackathon** on the API key. Keys with access to **all** platforms need no extra toggle.
 
-### Submit to active hackathon
+### Submit to a hackathon
+
+When **one** published event is in its submission window, the backend picks it automatically. If **several** are open, preflight fails until you pass **`--hackathon-id <UUID>`** (copy from the dashboard or hackathon URL).
 
 ```bash
 nepher-cli --service hackathon submit --apikey <nepher_api_key> --submission submission.zip --assets assets.zip
+nepher-cli --service hackathon submit --apikey <nepher_api_key> --hackathon-id <uuid> --submission submission.zip --assets assets.zip
 ```
 
 You do **not** need a registered Bittensor coldkey to submit. A coldkey is only used for stake-weighted voting when an event uses open community scoring.

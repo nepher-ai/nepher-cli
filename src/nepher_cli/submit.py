@@ -163,6 +163,7 @@ def submit(
     base_url: str,
     *,
     public_source: bool = False,
+    hackathon_id: str | None = None,
 ) -> int:
     validate_api_key_format(api_key)
 
@@ -192,9 +193,12 @@ def submit(
 
     console.print("Verifying your API key and submission eligibility...")
     pre_url = _preflight_url(base_url)
+    json_body: dict[str, Any] = {"api_key": api_key}
+    if hackathon_id and str(hackathon_id).strip():
+        json_body["hackathon_id"] = str(hackathon_id).strip()
     with httpx.Client() as client:
         try:
-            pr = request_json(client, "POST", pre_url, json_body={"api_key": api_key})
+            pr = request_json(client, "POST", pre_url, json_body=json_body)
         except httpx.RequestError as e:
             console.print(
                 "[red]Unable to reach the Nepher backend[/red]. "
@@ -204,7 +208,27 @@ def submit(
 
     if pr.status_code != 200:
         err = parse_error_body(pr.text) or pr.text.strip() or f"HTTP {pr.status_code}"
-        console.print(f"[red]{err}[/red]")
+        try:
+            err_obj = pr.json()
+        except json.JSONDecodeError:
+            err_obj = None
+        if (
+            isinstance(err_obj, dict)
+            and err_obj.get("code") == "multiple_hackathons"
+            and isinstance(err_obj.get("hackathons"), list)
+        ):
+            console.print(f"[red]{err}[/red]")
+            console.print("[bold]Open submission windows:[/bold]")
+            for row in err_obj["hackathons"]:
+                if isinstance(row, dict):
+                    hid = row.get("id", "?")
+                    title = row.get("title", "?")
+                    console.print(f"  • [cyan]{hid}[/cyan] — {title}")
+            console.print(
+                "\n[dim]Re-run with[/dim] [bold]--hackathon-id <UUID>[/bold] [dim]to choose one.[/dim]"
+            )
+        else:
+            console.print(f"[red]{err}[/red]")
         return 1
 
     try:
@@ -216,6 +240,12 @@ def submit(
     if not isinstance(pre_body, dict) or pre_body.get("status") != "ok":
         console.print("[red]Preflight did not return status ok.[/red]")
         return 1
+
+    hid = pre_body.get("hackathon_id")
+    htitle = pre_body.get("hackathon_title")
+    if hid:
+        title_bit = f" — {htitle}" if isinstance(htitle, str) and htitle.strip() else ""
+        console.print(f"Hackathon: [bold]{hid}[/bold]{title_bit}")
 
     limits = pre_body.get("limits")
     if not isinstance(limits, dict):
@@ -235,6 +265,8 @@ def submit(
 
     up_url = _upload_url(base_url)
     data: dict[str, str] = {"api_key": api_key}
+    if hackathon_id and str(hackathon_id).strip():
+        data["hackathon_id"] = str(hackathon_id).strip()
     if public_source:
         data["submitter_public_source"] = "true"
     else:

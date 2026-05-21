@@ -46,9 +46,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     subp = sub.add_parser(
         "submit",
-        help="Upload submission.zip and assets.zip to the active hackathon.",
+        help="Upload submission.zip and assets.zip (pick hackathon if several are open).",
     )
     subp.add_argument("--apikey", required=True, help="Nepher API key.")
+    subp.add_argument(
+        "--hackathon-id",
+        default=None,
+        metavar="UUID",
+        dest="hackathon_id",
+        help="Hackathon UUID when more than one event is accepting submissions.",
+    )
     subp.add_argument(
         "--submission",
         required=True,
@@ -93,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.assets),
         base,
         public_source=args.public_source,
+        hackathon_id=args.hackathon_id,
     )
 
 
