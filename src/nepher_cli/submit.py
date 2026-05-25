@@ -498,6 +498,48 @@ def _zip_input_to_temp(path: Path, prefix: str) -> Path:
     return dest
 
 
+def validate_submission_thumbnail(path: Path, *, max_image_size_mb: int) -> tuple[bytes, str, str]:
+    """Return (raw bytes, content_type, filename) or exit on validation failure."""
+    if not path.is_file():
+        console.print(f"[red]Path not found[/red]: {path}")
+        raise SystemExit(1)
+    ext = path.suffix.lower()
+    ext_to_mime = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    content_type = ext_to_mime.get(ext)
+    if not content_type:
+        console.print(
+            "[red]Unsupported thumbnail type[/red] — use JPEG, PNG, WebP, or GIF."
+        )
+        raise SystemExit(1)
+    try:
+        size = path.stat().st_size
+    except OSError as e:
+        console.print(f"[red]Could not read thumbnail[/red]: {e}")
+        raise SystemExit(1)
+    max_bytes = max_image_size_mb * 1024 * 1024
+    if size <= 0:
+        console.print("[red]Thumbnail file is empty[/red].")
+        raise SystemExit(1)
+    if size > max_bytes:
+        mb_sz = size / (1024 * 1024)
+        console.print(
+            f"[red]Thumbnail too large[/red]: {mb_sz:.1f} MB, limit is {max_image_size_mb} MB."
+        )
+        raise SystemExit(1)
+    try:
+        data = path.read_bytes()
+    except OSError as e:
+        console.print(f"[red]Could not read thumbnail[/red]: {e}")
+        raise SystemExit(1)
+    return data, content_type, path.name
+
+
 def submit(
     api_key: str,
     submission_path: Path,
@@ -506,6 +548,7 @@ def submit(
     *,
     title: str,
     description: str = "",
+    thumbnail: Path | None = None,
     public_source: bool = False,
     hackathon_id: str | None = None,
 ) -> int:
@@ -587,6 +630,11 @@ def submit(
     console.print("Validating assets against hackathon limits...")
     check_assets_against_limits(assets_scan, limits)
 
+    thumb_payload: tuple[bytes, str, str] | None = None
+    if thumbnail is not None:
+        max_img_mb = _limit_int(limits, "max_image_size_mb") or 10
+        thumb_payload = validate_submission_thumbnail(thumbnail, max_image_size_mb=max_img_mb)
+
     _print_quota_line("Eligible now", pre_body)
 
     cleanup: list[Path] = []
@@ -626,9 +674,10 @@ def submit(
 
         sub_mb = sub_size / (1024 * 1024)
         ast_mb = ast_size / (1024 * 1024)
-        console.print(
-            f"Uploading submission.zip ({sub_mb:.1f} MB) and assets.zip ({ast_mb:.1f} MB)..."
-        )
+        upload_bits = f"submission.zip ({sub_mb:.1f} MB) and assets.zip ({ast_mb:.1f} MB)"
+        if thumb_payload:
+            upload_bits += f" and thumbnail ({thumb_payload[2]})"
+        console.print(f"Uploading {upload_bits}...")
 
         up_url = _upload_url(base_url)
         data: dict[str, str] = {
@@ -643,10 +692,13 @@ def submit(
         with httpx.Client() as client:
             try:
                 with open(sub_zip, "rb") as sf, open(ast_zip, "rb") as af:
-                    files = {
+                    files: dict[str, tuple[str, object, str]] = {
                         "submission": ("submission.zip", sf, "application/zip"),
                         "assets": ("assets.zip", af, "application/zip"),
                     }
+                    if thumb_payload:
+                        raw, mime, fname = thumb_payload
+                        files["thumbnail"] = (fname, raw, mime)
                     ur = client.post(
                         up_url,
                         data=data,

@@ -1,20 +1,63 @@
-"""CLI entrypoint — argparse, global --service, hidden --backend."""
+"""CLI entrypoint — argparse and command dispatch."""
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from nepher_cli import __version__
-from nepher_cli.config import resolve_backend_base
+from nepher_cli.config import ACCOUNT_BACKEND, HACKATHON_BACKEND, resolve_backend_base
 from nepher_cli.register_coldkey import register_coldkey
 from nepher_cli.submit import submit
+
+_EPILOG = f"""\
+examples:
+  Register a Bittensor coldkey (requires btcli on PATH):
+    nepher-cli --service account register-coldkey \\
+      --wallet mywallet --apikey nepher_xxxxxxxx
+
+  Submit to a hackathon (folders are zipped automatically):
+    nepher-cli --service hackathon submit \\
+      --apikey nepher_xxxxxxxx \\
+      --title "My entry" \\
+      --submission ./my-project \\
+      --assets ./my-assets
+
+  Optional listing thumbnail (otherwise an image from --assets is used):
+    nepher-cli --service hackathon submit \\
+      --apikey nepher_xxxxxxxx \\
+      --title "My entry" \\
+      --thumbnail ./cover.png \\
+      --submission ./my-project \\
+      --assets ./my-assets
+
+  When several hackathons accept submissions, pass --hackathon-id:
+    nepher-cli --service hackathon submit \\
+      --apikey nepher_xxxxxxxx \\
+      --hackathon-id 550e8400-e29b-41d4-a716-446655440010 \\
+      --title "My entry" \\
+      --submission ./my-project \\
+      --assets ./my-assets
+
+API keys:
+  Create a key at https://accounts.nepher.ai — it must start with nepher_,
+  be active, and include Hackathon access when submitting.
+
+services:
+  account   {ACCOUNT_BACKEND}
+  hackathon {HACKATHON_BACKEND}
+"""
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="nepher-cli",
-        description="Nepher command-line tools — account (coldkey) and hackathon (submit; no coldkey required).",
+        description=(
+            "Nepher command-line tools: bind a Bittensor coldkey to your account, "
+            "or upload a hackathon project and assets."
+        ),
+        epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
@@ -22,13 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--service",
         required=True,
         choices=("account", "hackathon"),
-        help="Which backend integration to use: account or hackathon.",
-    )
-    p.add_argument(
-        "--backend",
-        default=None,
-        metavar="URL",
-        help=argparse.SUPPRESS,
+        help=(
+            "Which Nepher API to use: "
+            "'account' for register-coldkey, 'hackathon' for submit."
+        ),
     )
     p.add_argument(
         "--version",
@@ -39,54 +79,90 @@ def build_parser() -> argparse.ArgumentParser:
 
     reg = sub.add_parser(
         "register-coldkey",
-        help="Bind a Bittensor coldkey via the account API (requires btcli).",
+        help="Bind a Bittensor coldkey to your Nepher account (requires btcli).",
+        description=(
+            "Request a signing challenge from the account API, sign it with btcli, "
+            "and verify the coldkey on your Nepher account. "
+            "Run again with a different --wallet to replace an existing coldkey."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    reg.add_argument("--wallet", required=True, help="Bittensor wallet name (coldkey).")
-    reg.add_argument("--apikey", required=True, help="Nepher API key (identifies your account).")
+    reg.add_argument(
+        "--wallet",
+        required=True,
+        metavar="NAME",
+        help="Bittensor wallet name (coldkey). Must exist in your local btcli wallet.",
+    )
+    reg.add_argument(
+        "--apikey",
+        required=True,
+        metavar="KEY",
+        help="Nepher API key (starts with nepher_; from Account → API Keys).",
+    )
 
     subp = sub.add_parser(
         "submit",
-        help="Upload project + assets (directories zipped automatically; pick hackathon if several are open).",
+        help="Upload project + assets to a hackathon (no coldkey required).",
+        description=(
+            "Validate and zip your project folder and assets, run preflight checks, "
+            "then upload submission.zip and assets.zip. "
+            "Omit --hackathon-id when exactly one published event is in the submission phase; "
+            "otherwise pass the UUID from your dashboard URL "
+            "(/dashboard/hackathons/<UUID>)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    subp.add_argument("--apikey", required=True, help="Nepher API key.")
+    subp.add_argument(
+        "--apikey",
+        required=True,
+        metavar="KEY",
+        help="Nepher API key (starts with nepher_; Hackathon access required).",
+    )
     subp.add_argument(
         "--hackathon-id",
         default=None,
         metavar="UUID",
         dest="hackathon_id",
         help=(
-            "Hackathon UUID to submit to. Required when several published events are in the "
-            "submission phase; omit when only one is open (preflight picks it). "
-            "Copy from the dashboard URL or the list printed on preflight error."
+            "Target hackathon UUID. Required when several events are in submission; "
+            "optional when only one is open."
         ),
     )
     subp.add_argument(
         "--submission",
         required=True,
-        metavar="DIR",
+        metavar="PATH",
         dest="submission",
-        help="Path to project folder (or submission.zip). Folder is validated and zipped before upload.",
+        help="Project folder or existing submission.zip (folder is validated and zipped).",
     )
     subp.add_argument(
         "--assets",
         required=True,
-        metavar="DIR",
-        help="Path to assets folder (or assets.zip): images, videos, PDFs only.",
+        metavar="PATH",
+        help="Assets folder or assets.zip (images, videos, and PDFs only).",
     )
     subp.add_argument(
         "--title",
         required=True,
-        help="Submission title (required, max 200 characters; shown on your entry page).",
+        metavar="TEXT",
+        help="Entry title (required, max 200 characters).",
     )
     subp.add_argument(
         "--description",
         default="",
-        help="Submission description as Markdown (optional; shown on your entry page).",
+        metavar="TEXT",
+        help="Optional Markdown description for your entry page.",
+    )
+    subp.add_argument(
+        "--thumbnail",
+        default=None,
+        metavar="PATH",
+        help="Optional entry thumbnail image (JPEG, PNG, WebP, or GIF).",
     )
     subp.add_argument(
         "--public-source",
         action="store_true",
-        help="Opt in to public source download when rules allow (matches website checkbox).",
+        help="Opt in to public source download when the event allows it.",
     )
     return p
 
@@ -101,12 +177,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.service == "hackathon" and args.command != "submit":
         parser.error("--service hackathon only supports submit")
 
-    base = resolve_backend_base(args.service, args.backend)
+    base = resolve_backend_base(args.service)
 
     if args.command == "register-coldkey":
         return register_coldkey(args.wallet, args.apikey, base)
-
-    from pathlib import Path
 
     return submit(
         args.apikey,
@@ -115,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         base,
         title=args.title,
         description=args.description,
+        thumbnail=Path(args.thumbnail) if args.thumbnail else None,
         public_source=args.public_source,
         hackathon_id=args.hackathon_id,
     )
