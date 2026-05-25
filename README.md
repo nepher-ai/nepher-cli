@@ -70,7 +70,7 @@ nepher-cli --service hackathon submit \
 
 ## API keys
 
-Create a key at [accounts.nepher.ai](https://accounts.nepher.ai) (Account → API Keys):
+Create a key at [account.nepher.ai](https://account.nepher.ai) (Account → API Keys):
 
 - Must start with `nepher_`
 - Must be **active** (not revoked) and **not expired**
