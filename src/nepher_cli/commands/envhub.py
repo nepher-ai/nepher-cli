@@ -19,12 +19,19 @@ import httpx
 from rich.console import Console
 
 from nepher_cli.config import ENVHUB_BACKEND
-from nepher_cli.credentials import get_auth_headers, get_stored_api_key
-from nepher_cli.http_util import parse_error_body
+from nepher_cli.core.credentials import get_auth_headers, get_stored_api_key
+from nepher_cli.core.http import parse_error_body
+from nepher_cli.envhub.cache import is_cached_env, list_cached_env_dirs, resolve_cache_dir
+from nepher_cli.envhub.config import (
+    get_value as get_envhub_config_value,
+    list_values as list_envhub_config_values,
+    mask_secret as mask_envhub_config_secret,
+    parse_config_value,
+    reset_config as reset_envhub_config,
+    set_value as set_envhub_config_value,
+)
 
 console = Console(stderr=True)
-
-_ENVHUB_CACHE_DIR = Path.home() / ".nepher" / "envhub" / "cache"
 
 
 def _headers(api_key: str | None) -> dict[str, str]:
@@ -144,12 +151,12 @@ def envhub_list(
 def envhub_download(env_id: str, cache_dir: str | None, force: bool, api_key: str | None) -> None:
     """Download an environment bundle and cache it locally.
 
-    The bundle is extracted to ~/.nepher/envhub/cache/<env_id>/ by default.
+    The bundle is extracted to ~/.nepher/cache/<env_id>/ by default.
     """
-    cache_root = Path(cache_dir) if cache_dir else _ENVHUB_CACHE_DIR
+    cache_root = resolve_cache_dir(cache_dir)
     env_cache = cache_root / env_id
 
-    if env_cache.exists() and not force:
+    if is_cached_env(env_cache) and not force:
         console.print(f"[dim]Already cached:[/dim] {env_cache}")
         return
 
@@ -284,12 +291,8 @@ def envhub_cache() -> None:
 @click.option("--cache-dir", type=click.Path(), default=None)
 def cache_list(cache_dir: str | None) -> None:
     """List locally cached environments."""
-    root = Path(cache_dir) if cache_dir else _ENVHUB_CACHE_DIR
-    if not root.exists():
-        console.print("[dim]No cached environments.[/dim]")
-        return
-
-    entries = [d for d in root.iterdir() if d.is_dir()]
+    root = resolve_cache_dir(cache_dir)
+    entries = list_cached_env_dirs(root)
     if not entries:
         console.print("[dim]No cached environments.[/dim]")
         return
@@ -305,7 +308,7 @@ def cache_list(cache_dir: str | None) -> None:
 @click.option("--cache-dir", type=click.Path(), default=None)
 def cache_clear(env_id: str | None, cache_dir: str | None) -> None:
     """Clear cache — all environments or a specific one."""
-    root = Path(cache_dir) if cache_dir else _ENVHUB_CACHE_DIR
+    root = resolve_cache_dir(cache_dir)
     if env_id:
         target = root / env_id
         if target.exists():
@@ -323,13 +326,13 @@ def cache_clear(env_id: str | None, cache_dir: str | None) -> None:
 @click.option("--cache-dir", type=click.Path(), default=None)
 def cache_info(cache_dir: str | None) -> None:
     """Show cache size and location."""
-    root = Path(cache_dir) if cache_dir else _ENVHUB_CACHE_DIR
+    root = resolve_cache_dir(cache_dir)
     console.print(f"Cache directory: {root}")
     if not root.exists():
         console.print("  (empty — nothing cached yet)")
         return
 
-    entries = [d for d in root.iterdir() if d.is_dir()]
+    entries = list_cached_env_dirs(root)
     total = sum(f.stat().st_size for d in entries for f in d.rglob("*") if f.is_file())
     console.print(f"  Environments: {len(entries)}")
     console.print(f"  Total size:   {total / 1024 / 1024:.2f} MB")
@@ -346,7 +349,7 @@ def cache_info(cache_dir: str | None) -> None:
 @click.option("--cache-dir", type=click.Path(), default=None)
 def cache_migrate(new_path: str, cache_dir: str | None) -> None:
     """Move the local cache to a new directory."""
-    old_root = Path(cache_dir) if cache_dir else _ENVHUB_CACHE_DIR
+    old_root = resolve_cache_dir(cache_dir)
     new_root = Path(new_path)
     if not old_root.exists():
         console.print("[yellow]Nothing to migrate — cache is empty.[/yellow]")
@@ -384,9 +387,9 @@ def envhub_view(env_id: str, category: str | None, scene: str | None, cache_dir:
         )
         raise SystemExit(1)
 
-    root = Path(cache_dir) if cache_dir else _ENVHUB_CACHE_DIR
+    root = resolve_cache_dir(cache_dir)
     env_path = root / env_id
-    if not env_path.exists():
+    if not is_cached_env(env_path):
         console.print(
             f"[yellow]{env_id} is not cached.[/yellow] "
             f"Run [bold]npcli envhub download {env_id}[/bold] first."
@@ -421,48 +424,18 @@ def envhub_view(env_id: str, category: str | None, scene: str | None, cache_dir:
 
 @envhub.group("config")
 def envhub_config() -> None:
-    """Manage EnvHub-specific configuration values."""
-
-
-def _config_path() -> Path:
-    try:
-        from platformdirs import user_config_dir
-        base = Path(user_config_dir("nepher", appauthor=False))
-    except ImportError:
-        base = Path.home() / ".nepher"
-    p = base / "envhub_config.json"
-    return p
-
-
-def _read_config() -> dict[str, Any]:
-    p = _config_path()
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _write_config(data: dict[str, Any]) -> None:
-    p = _config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    """Manage EnvHub configuration (shared with the ``nepher`` CLI)."""
 
 
 @envhub_config.command("get")
 @click.argument("key")
 def config_get(key: str) -> None:
     """Get a configuration value."""
-    cfg = _read_config()
-    val = cfg.get(key)
+    val = get_envhub_config_value(key)
     if val is None:
         console.print(f"[yellow]Key '{key}' not set.[/yellow]")
     else:
-        lower = key.lower()
-        if any(s in lower for s in ("api_key", "token", "secret", "password")):
-            val = f"{str(val)[:4]}...{str(val)[-4:]}" if len(str(val)) >= 8 else "***"
-        click.echo(val)
+        click.echo(mask_envhub_config_secret(key, val))
 
 
 @envhub_config.command("set")
@@ -470,38 +443,24 @@ def config_get(key: str) -> None:
 @click.argument("value")
 def config_set(key: str, value: str) -> None:
     """Set a configuration value."""
-    cfg = _read_config()
-    parsed: Any = value
-    if value.lower() in ("true", "false"):
-        parsed = value.lower() == "true"
-    elif value.isdigit():
-        parsed = int(value)
-    cfg[key] = parsed
-    _write_config(cfg)
-    console.print(f"[green]Set[/green] {key} = {parsed}")
+    parsed = parse_config_value(value)
+    set_envhub_config_value(key, parsed)
+    display = mask_envhub_config_secret(key, parsed) if isinstance(parsed, str) else parsed
+    console.print(f"[green]Set[/green] {key} = {display}")
 
 
 @envhub_config.command("list")
 def config_list() -> None:
-    """List all EnvHub configuration values."""
-    cfg = _read_config()
-    if not cfg:
-        console.print("[dim]No EnvHub configuration set.[/dim]")
-        return
-    console.print("[bold]EnvHub configuration:[/bold]")
-    for k, v in cfg.items():
-        lower = k.lower()
-        if any(s in lower for s in ("api_key", "token", "secret", "password")):
-            v = "***"
-        click.echo(f"  {k}: {v}")
+    """List EnvHub configuration values."""
+    console.print("[bold]Configuration:[/bold]")
+    for key, value in list_envhub_config_values().items():
+        click.echo(f"  {key}: {value}")
 
 
 @envhub_config.command("reset")
 def config_reset() -> None:
-    """Reset EnvHub configuration to defaults."""
-    p = _config_path()
-    if p.exists():
-        p.unlink()
-        console.print("[green]EnvHub configuration reset.[/green]")
+    """Reset configuration to defaults."""
+    if reset_envhub_config():
+        console.print("[green]Configuration reset to defaults.[/green]")
     else:
         console.print("[dim]No configuration file to reset.[/dim]")

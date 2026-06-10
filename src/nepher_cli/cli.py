@@ -9,7 +9,6 @@ from nepher_cli.commands.account import account
 from nepher_cli.commands.envhub import envhub
 from nepher_cli.commands.hackathon import hackathon
 from nepher_cli.commands.simstore import simstore
-from nepher_cli.commands.subnet import subnet
 from nepher_cli.commands.tournament import tournament
 
 
@@ -26,8 +25,7 @@ def main() -> None:
       account     Login, API keys, and coldkey registration
       hackathon   Browse and submit to hackathons
       envhub      Manage Isaac Lab environment bundles
-      subnet      Interact with Bittensor Subnet 49
-      tournament  Browse tournaments and check leaderboards
+      tournament  Browse tournaments, submit agents, leaderboards
       simstore    SimStore marketplace (coming soon)
 
     \b
@@ -47,7 +45,6 @@ def main() -> None:
 main.add_command(account)
 main.add_command(hackathon)
 main.add_command(envhub)
-main.add_command(subnet)
 main.add_command(tournament)
 main.add_command(simstore)
 

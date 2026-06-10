@@ -9,8 +9,7 @@ The unified command-line interface for [Nepher](https://nepher.ai)'s ecosystem �
 | `npcli account` | Login, API keys, coldkey registration | [`btcli`](https://github.com/opentensor/bittensor) for coldkey |
 | `npcli hackathon` | Browse hackathons and upload submissions | — |
 | `npcli envhub` | Manage Isaac Lab environment bundles | Isaac Lab for `view` |
-| `npcli subnet` | Validate and submit agents to Subnet 49 | `nepher-subnet` + `bittensor` |
-| `npcli tournament` | Browse tournaments and leaderboards | — |
+| `npcli tournament` | Browse tournaments, leaderboards, validate and submit agents | `nepher-subnet` + `bittensor` for validate/submit only |
 | `npcli simstore` | SimStore marketplace *(coming soon)* | — |
 
 ## Install
@@ -109,23 +108,33 @@ npcli envhub cache info                    # disk usage
 npcli envhub cache clear                   # remove all cached bundles
 ```
 
-### 6. Subnet 49 — agent submission
-
-Requires `nepher-subnet` (and `bittensor`) to be installed:
-
-```bash
-npcli subnet validate --path ./my-agent          # check structure
-npcli subnet list-active                          # active tournaments
-npcli subnet submit --path ./my-agent \
-  --wallet-name miner --wallet-hotkey default
-```
-
-### 7. Tournaments
+### 6. Tournaments
 
 ```bash
 npcli tournament list                            # all tournaments
 npcli tournament status <tournament_id>          # details
 npcli tournament leaderboard <tournament_id>     # score table
+```
+
+```bash
+npcli tournament list-active                       # active tournaments + submit windows
+```
+
+Agent validation and submission (requires `nepher-subnet` and `bittensor`):
+
+```bash
+npcli tournament validate --path ./my-agent          # check structure
+npcli tournament submit --path ./my-agent \
+  --wallet-name miner --wallet-hotkey default
+```
+
+Your Nepher account is identified by your API key (from `npcli account login`, `NEPHER_API_KEY`, or `--api-key`). The wallet hotkey is used only to sign the submission archive.
+
+```bash
+# Explicit API key (CI/CD or when not logged in locally)
+npcli tournament submit --path ./my-agent \
+  --api-key nepher_xxxxxxxx \
+  --wallet-name miner --wallet-hotkey default
 ```
 
 ## API keys
@@ -135,12 +144,14 @@ Create a key at [account.nepher.ai](https://account.nepher.ai) (Account > API Ke
 - Must start with `nepher_`
 - Must be **active** (not revoked) and **not expired**
 - For `hackathon submit`, enable **Hackathon** access (or use an unrestricted key)
+- For `tournament submit`, enable **Tournament** access (or use an unrestricted key)
 
 After `npcli account login`, the key is stored securely and reused automatically. For CI/CD, set the environment variable instead:
 
 ```bash
 export NEPHER_API_KEY=nepher_xxxxxxxx
 npcli hackathon submit --title "CI build" --submission ./dist --assets ./assets
+npcli tournament submit --path ./my-agent --wallet-name miner --wallet-hotkey default
 ```
 
 ## Manage API keys from the CLI
@@ -158,7 +169,7 @@ npcli account api-keys revoke <key_id>
 | Account | `account-api.nepher.ai` | `account` |
 | Hackathon | `api.hackathon.nepher.ai` | `hackathon` |
 | EnvHub | `envhub-api.nepher.ai` | `envhub` |
-| Tournament | `tournament-api.nepher.ai` | `tournament`, `subnet` |
+| Tournament | `tournament-api.nepher.ai` | `tournament` |
 | SimStore | `api.simstore.nepher.ai` | `simstore` *(coming soon)* |
 
 ## Notes
@@ -188,7 +199,7 @@ For full flag reference, run any command with `--help`:
 npcli --help
 npcli hackathon submit --help
 npcli envhub --help
-npcli subnet submit --help
+npcli tournament submit --help
 ```
 
 ## License

@@ -41,7 +41,7 @@ def request_json(
 
 def authed_get(url: str, *, api_key: str | None = None, params: dict[str, Any] | None = None) -> httpx.Response:
     """GET with auth headers resolved from credential store or override."""
-    from nepher_cli.credentials import get_auth_headers
+    from nepher_cli.core.credentials import get_auth_headers
 
     headers = get_auth_headers(api_key)
     with httpx.Client() as client:
@@ -58,7 +58,7 @@ def authed_post(
     timeout: float = 120.0,
 ) -> httpx.Response:
     """POST with auth headers resolved from credential store or override."""
-    from nepher_cli.credentials import get_auth_headers
+    from nepher_cli.core.credentials import get_auth_headers
 
     headers = get_auth_headers(api_key)
     with httpx.Client() as client:
@@ -69,7 +69,7 @@ def authed_post(
 
 def authed_delete(url: str, *, api_key: str | None = None) -> httpx.Response:
     """DELETE with auth headers resolved from credential store or override."""
-    from nepher_cli.credentials import get_auth_headers
+    from nepher_cli.core.credentials import get_auth_headers
 
     headers = get_auth_headers(api_key)
     with httpx.Client() as client:

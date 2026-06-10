@@ -21,7 +21,7 @@ from rich.console import Console
 from rich.table import Table
 
 from nepher_cli.config import ACCOUNT_BACKEND
-from nepher_cli.credentials import (
+from nepher_cli.core.credentials import (
     clear_credentials,
     get_auth_headers,
     get_stored_api_key,
@@ -29,7 +29,7 @@ from nepher_cli.credentials import (
     save_credentials,
     whoami_from_cache,
 )
-from nepher_cli.http_util import parse_error_body, request_json
+from nepher_cli.core.http import parse_error_body, request_json
 
 console = Console(stderr=True)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nepher_cli.http_util import parse_error_body
+from nepher_cli.core.http import parse_error_body
 
 
 def test_parse_error_body_json() -> None:
