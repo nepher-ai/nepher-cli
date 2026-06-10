@@ -1,3 +1,3 @@
-"""Nepher CLI — account coldkey registration and hackathon submissions (submit does not require a coldkey)."""
+"""npcli — unified Nepher command-line interface."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

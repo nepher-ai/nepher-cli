@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nepher_cli.submit import validate_submission_metadata
+from nepher_cli.commands.hackathon import validate_submission_metadata
 
 
 def test_validate_metadata_accepts_title_and_description() -> None:

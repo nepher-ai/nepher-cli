@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nepher_cli.submit import (
+from nepher_cli.commands.hackathon import (
     check_assets_against_limits,
     scan_assets_directory,
     submission_directory_requirement_violations,

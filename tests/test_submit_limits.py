@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from nepher_cli.submit import check_assets_against_limits, scan_assets_zip
+from nepher_cli.commands.hackathon import check_assets_against_limits, scan_assets_zip
 
 
 def _zip_bytes(files: list[tuple[str, bytes]]) -> bytes:

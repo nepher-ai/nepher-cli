@@ -12,7 +12,7 @@ from nepher_cli.config import (
 
 
 def test_account_backend_constant() -> None:
-    assert ACCOUNT_BACKEND == "https://api.accounts.nepher.ai"
+    assert ACCOUNT_BACKEND == "https://account-api.nepher.ai"
     assert DEFAULT_ACCOUNT_BACKEND == ACCOUNT_BACKEND
 
 

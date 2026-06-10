@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nepher_cli.submit import _print_quota_line
+from nepher_cli.commands.hackathon import _print_quota_line
 
 
 def test_print_quota_line_skips_when_missing_fields(capsys) -> None:

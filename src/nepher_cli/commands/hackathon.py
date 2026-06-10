@@ -1,4 +1,4 @@
-"""hackathon submit — validate directories or zips, zip dirs, preflight, upload."""
+"""hackathon command group — submit logic and CLI commands."""
 
 from __future__ import annotations
 
@@ -10,30 +10,26 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+import click
 import httpx
 from rich.console import Console
+from rich.table import Table
 
+from nepher_cli.config import HACKATHON_BACKEND
+from nepher_cli.credentials import get_stored_api_key
 from nepher_cli.http_util import parse_error_body, request_json
 
 console = Console(stderr=True)
 
-
-def _print_quota_line(prefix: str, body: dict[str, Any]) -> None:
-    rem = body.get("submissions_remaining")
-    max_n = body.get("max_submissions_per_user")
-    used = body.get("submission_attempts_used")
-    if isinstance(rem, int) and isinstance(max_n, int) and isinstance(used, int):
-        console.print(
-            f"{prefix}: [bold]{rem}[/bold] of {max_n} upload attempt(s) remaining ({used} used successfully)."
-        )
-
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 VIDEO_EXTS = {".mp4", ".webm", ".mov"}
 PDF_EXTS = {".pdf"}
 ALLOWED_ASSET_EXTS = IMAGE_EXTS | VIDEO_EXTS | PDF_EXTS
 
-# Local sanity cap before network (bytes) — server preflight limits override when present.
 DEFAULT_MAX_SUBMISSION_ZIP_BYTES = 512 * 1024 * 1024  # 512 MiB
 
 MAX_FILES_IN_SUBMISSION = 20_000
@@ -41,15 +37,8 @@ MAX_FILES_IN_ASSETS = 5000
 MAX_TOTAL_ASSETS_UNCOMPRESSED = 2 * 1024 * 1024 * 1024  # 2 GiB
 
 BLOCKED_SUFFIXES = (
-    ".exe",
-    ".dll",
-    ".bat",
-    ".cmd",
-    ".com",
-    ".msi",
-    ".scr",
-    ".pif",
-    ".vbs",
+    ".exe", ".dll", ".bat", ".cmd", ".com",
+    ".msi", ".scr", ".pif", ".vbs",
 )
 
 SECRET_TEXT_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".json", ".env", ".yaml", ".yml", ".toml", ".md"}
@@ -59,8 +48,11 @@ SECRET_PATTERNS = [
     re.compile(rb"-----BEGIN (RSA |OPENSSH )?PRIVATE KEY-----"),
 ]
 
-
 MAX_SUBMISSION_TITLE_LEN = 200
+
+# ---------------------------------------------------------------------------
+# Core validation helpers
+# ---------------------------------------------------------------------------
 
 
 def validate_api_key_format(api_key: str) -> None:
@@ -72,7 +64,7 @@ def validate_api_key_format(api_key: str) -> None:
 
 
 def validate_submission_metadata(title: str, description: str) -> tuple[str, str]:
-    """Match hackathon backend ``parse_submission_title_description`` rules."""
+    """Validate title and description; return stripped versions or raise SystemExit."""
     title_stripped = (title or "").strip()
     description_stripped = (description or "").strip()
     if not title_stripped:
@@ -87,6 +79,16 @@ def validate_submission_metadata(title: str, description: str) -> tuple[str, str
     return title_stripped, description_stripped
 
 
+def _print_quota_line(prefix: str, body: dict[str, Any]) -> None:
+    rem = body.get("submissions_remaining")
+    max_n = body.get("max_submissions_per_user")
+    used = body.get("submission_attempts_used")
+    if isinstance(rem, int) and isinstance(max_n, int) and isinstance(used, int):
+        console.print(
+            f"{prefix}: [bold]{rem}[/bold] of {max_n} upload attempt(s) remaining ({used} used successfully)."
+        )
+
+
 def _preflight_url(base: str) -> str:
     return f"{base.rstrip('/')}/api/v1/hackathon/submit/preflight/"
 
@@ -99,8 +101,7 @@ def _is_dangerous_path(name: str) -> bool:
     n = name.replace("\\", "/").strip()
     if not n or n.endswith("/"):
         return False
-    parts = n.split("/")
-    for p in parts:
+    for p in n.split("/"):
         if p in ("..", "") or p.startswith(".."):
             return True
     return False
@@ -115,9 +116,7 @@ def _require_existing_path(path: Path, label: str) -> None:
         console.print(f"[red]Path not found[/red]: {path}")
         raise SystemExit(1)
     if not path.is_dir() and not path.is_file():
-        console.print(
-            f"[red]{label} must be a directory or zip file[/red]: {path}"
-        )
+        console.print(f"[red]{label} must be a directory or zip file[/red]: {path}")
         raise SystemExit(1)
 
 
@@ -129,9 +128,7 @@ def _iter_directory_files(root: Path) -> list[tuple[str, Path]]:
         base = Path(dirpath)
         for name in filenames:
             full = base / name
-            if full.is_symlink():
-                continue
-            if not full.is_file():
+            if full.is_symlink() or not full.is_file():
                 continue
             rel = full.relative_to(root).as_posix()
             if _is_dangerous_path(rel):
@@ -154,34 +151,26 @@ def submission_zip_requirement_violations(zip_path: Path) -> list[str]:
         zf = zipfile.ZipFile(zip_path, "r")
     except zipfile.BadZipFile:
         return ["invalid submission.zip"]
-
     try:
         infos = zf.infolist()
         if not infos:
             return ["submission.zip is empty"]
-
         nonempty = 0
         for i in infos:
             if i.is_dir():
                 continue
             if _is_dangerous_path(i.filename):
                 reasons.append(f"Unsafe path (zip-slip risk): {i.filename!r}")
-            suf = _suffix(i.filename)
-            if suf in BLOCKED_SUFFIXES:
-                reasons.append(f"Blocked file type {suf} in archive: {i.filename}")
+            if _suffix(i.filename) in BLOCKED_SUFFIXES:
+                reasons.append(f"Blocked file type {_suffix(i.filename)} in archive: {i.filename}")
             if i.file_size > 0:
                 nonempty += 1
-
         if nonempty == 0:
             return ["submission.zip has no non-empty files"]
-
         if len(infos) > MAX_FILES_IN_SUBMISSION:
-            reasons.append(
-                f"Too many files in archive ({len(infos)} > {MAX_FILES_IN_SUBMISSION})"
-            )
+            reasons.append(f"Too many files in archive ({len(infos)} > {MAX_FILES_IN_SUBMISSION})")
     finally:
         zf.close()
-
     return reasons[:80]
 
 
@@ -191,13 +180,11 @@ def submission_zip_secret_findings(zip_path: Path) -> list[str]:
         zf = zipfile.ZipFile(zip_path, "r")
     except zipfile.BadZipFile:
         return []
-
     try:
         for i in zf.infolist():
             if i.is_dir() or i.file_size > 512_000:
                 continue
-            suf = _suffix(i.filename)
-            if suf not in SECRET_TEXT_SUFFIXES and suf != "":
+            if _suffix(i.filename) not in SECRET_TEXT_SUFFIXES and _suffix(i.filename) != "":
                 continue
             try:
                 data = zf.read(i.filename)
@@ -205,13 +192,10 @@ def submission_zip_secret_findings(zip_path: Path) -> list[str]:
                 continue
             for pat in SECRET_PATTERNS:
                 if pat.search(data):
-                    findings.append(
-                        f"Possible secret material in {i.filename} — manual review"
-                    )
+                    findings.append(f"Possible secret material in {i.filename} — manual review")
                     break
     finally:
         zf.close()
-
     return findings[:50]
 
 
@@ -220,44 +204,32 @@ def submission_directory_requirement_violations(root: Path) -> list[str]:
     files = _iter_directory_files(root)
     if not files:
         return ["submission folder is empty"]
-
     nonempty = 0
     for rel, path in files:
         if _is_dangerous_path(rel):
             reasons.append(f"Unsafe path: {rel!r}")
-        suf = _suffix(rel)
-        if suf in BLOCKED_SUFFIXES:
-            reasons.append(f"Blocked file type {suf}: {rel}")
+        if _suffix(rel) in BLOCKED_SUFFIXES:
+            reasons.append(f"Blocked file type {_suffix(rel)}: {rel}")
         try:
             if path.stat().st_size > 0:
                 nonempty += 1
         except OSError:
             continue
-
     if nonempty == 0:
         return ["submission folder has no non-empty files"]
-
     if len(files) > MAX_FILES_IN_SUBMISSION:
-        reasons.append(
-            f"Too many files in submission folder ({len(files)} > {MAX_FILES_IN_SUBMISSION})"
-        )
-
+        reasons.append(f"Too many files in submission folder ({len(files)} > {MAX_FILES_IN_SUBMISSION})")
     return reasons[:80]
 
 
 def submission_directory_secret_findings(root: Path) -> list[str]:
     findings: list[str] = []
     for rel, path in _iter_directory_files(root):
-        suf = _suffix(rel)
-        if suf not in SECRET_TEXT_SUFFIXES and suf != "":
+        if _suffix(rel) not in SECRET_TEXT_SUFFIXES and _suffix(rel) != "":
             continue
         try:
-            size = path.stat().st_size
-        except OSError:
-            continue
-        if size > 512_000:
-            continue
-        try:
+            if path.stat().st_size > 512_000:
+                continue
             data = path.read_bytes()
         except OSError:
             continue
@@ -271,9 +243,9 @@ def submission_directory_secret_findings(root: Path) -> list[str]:
 def _print_requirement_errors(label: str, errors: list[str]) -> None:
     console.print(f"[red]{label} does not meet requirements[/red]:")
     for line in errors[:20]:
-        console.print(f"  • {line}")
+        console.print(f"  - {line}")
     if len(errors) > 20:
-        console.print(f"  … and {len(errors) - 20} more")
+        console.print(f"  ... and {len(errors) - 20} more")
 
 
 def _assert_zip(path: Path, label: str) -> zipfile.ZipFile:
@@ -281,18 +253,14 @@ def _assert_zip(path: Path, label: str) -> zipfile.ZipFile:
         console.print(f"[red]Not a zip file[/red]: {label} ({path})")
         raise SystemExit(1)
     try:
-        zf = zipfile.ZipFile(path, "r")
+        return zipfile.ZipFile(path, "r")
     except zipfile.BadZipFile:
         console.print(f"[red]Not a valid zip file[/red]: {label} ({path})")
         raise SystemExit(1) from None
-    return zf
 
 
 def _submission_zip_non_empty(zf: zipfile.ZipFile) -> bool:
-    for info in zf.infolist():
-        if not info.is_dir() and info.file_size > 0:
-            return True
-    return False
+    return any(not info.is_dir() and info.file_size > 0 for info in zf.infolist())
 
 
 def scan_assets_zip(zf: zipfile.ZipFile) -> dict[str, Any]:
@@ -301,28 +269,24 @@ def scan_assets_zip(zf: zipfile.ZipFile) -> dict[str, Any]:
     sizes: dict[str, list[tuple[str, int]]] = {"images": [], "videos": [], "pdfs": []}
     unsupported: list[str] = []
     for info in zf.infolist():
-        if info.is_dir():
+        if info.is_dir() or info.filename.endswith("/"):
             continue
-        name = info.filename
-        if name.endswith("/"):
+        if _is_dangerous_path(info.filename):
+            unsupported.append(f"Unsafe path in assets.zip: {info.filename!r}")
             continue
-        if _is_dangerous_path(name):
-            unsupported.append(f"Unsafe path in assets.zip: {name!r}")
-            continue
-        base = Path(name).name
-        ext = Path(base).suffix.lower()
+        ext = Path(Path(info.filename).name).suffix.lower()
         size = info.file_size
         if ext in IMAGE_EXTS:
             counts["images"] += 1
-            sizes["images"].append((name, size))
+            sizes["images"].append((info.filename, size))
         elif ext in VIDEO_EXTS:
             counts["videos"] += 1
-            sizes["videos"].append((name, size))
+            sizes["videos"].append((info.filename, size))
         elif ext in PDF_EXTS:
             counts["pdfs"] += 1
-            sizes["pdfs"].append((name, size))
+            sizes["pdfs"].append((info.filename, size))
         else:
-            unsupported.append(f"Unsupported asset type in assets.zip: {name}")
+            unsupported.append(f"Unsupported asset type in assets.zip: {info.filename}")
     return {"counts": counts, "sizes": sizes, "unsupported": unsupported}
 
 
@@ -338,9 +302,7 @@ def scan_assets_directory(root: Path) -> dict[str, Any]:
         return {"counts": counts, "sizes": sizes, "unsupported": unsupported}
 
     if len(files) > MAX_FILES_IN_ASSETS:
-        unsupported.append(
-            f"Too many files in assets folder ({len(files)} > {MAX_FILES_IN_ASSETS})"
-        )
+        unsupported.append(f"Too many files in assets folder ({len(files)} > {MAX_FILES_IN_ASSETS})")
 
     for rel, path in files:
         try:
@@ -378,18 +340,15 @@ def _limit_int(limits: dict[str, Any], key: str) -> int | None:
         return None
 
 
-def check_assets_against_limits(
-    scan: dict[str, Any],
-    limits: dict[str, Any],
-) -> None:
-    """Raise SystemExit if limits exceeded."""
+def check_assets_against_limits(scan: dict[str, Any], limits: dict[str, Any]) -> None:
+    """Raise SystemExit if any asset limit is exceeded."""
     unsupported = scan.get("unsupported") or []
     if unsupported:
         console.print("[red]assets do not meet requirements[/red]:")
         for line in unsupported[:20]:
-            console.print(f"  • {line}")
+            console.print(f"  - {line}")
         if len(unsupported) > 20:
-            console.print(f"  … and {len(unsupported) - 20} more")
+            console.print(f"  ... and {len(unsupported) - 20} more")
         raise SystemExit(1)
 
     c = scan["counts"]
@@ -401,43 +360,31 @@ def check_assets_against_limits(
     max_pdf_mb = _limit_int(limits, "max_pdf_size_mb")
 
     if max_img is not None and c["images"] > max_img:
-        console.print(
-            f"[red]assets exceed image limit[/red]: found {c['images']}, limit is {max_img}."
-        )
+        console.print(f"[red]assets exceed image limit[/red]: found {c['images']}, limit is {max_img}.")
         raise SystemExit(1)
     if max_vid is not None and c["videos"] > max_vid:
-        console.print(
-            f"[red]assets exceed video limit[/red]: found {c['videos']}, limit is {max_vid}."
-        )
+        console.print(f"[red]assets exceed video limit[/red]: found {c['videos']}, limit is {max_vid}.")
         raise SystemExit(1)
     if max_pdf is not None and c["pdfs"] > max_pdf:
-        console.print(
-            f"[red]assets exceed PDF limit[/red]: found {c['pdfs']}, limit is {max_pdf}."
-        )
+        console.print(f"[red]assets exceed PDF limit[/red]: found {c['pdfs']}, limit is {max_pdf}.")
         raise SystemExit(1)
 
     mb = 1024 * 1024
 
-    def check_sizes(
-        key_mb: int | None,
-        pairs: list[tuple[str, int]],
-        label: str,
-    ) -> None:
+    def _check_sizes(key_mb: int | None, pairs: list[tuple[str, int]], label: str) -> None:
         if key_mb is None:
             return
         max_bytes = key_mb * mb
         for name, sz in pairs:
             if sz > max_bytes:
-                mb_sz = sz / mb
                 console.print(
-                    f"[red]{label} too large[/red]: {name} is {mb_sz:.1f} MB, limit is {key_mb} MB."
+                    f"[red]{label} too large[/red]: {name} is {sz / mb:.1f} MB, limit is {key_mb} MB."
                 )
                 raise SystemExit(1)
 
-    sizes = scan["sizes"]
-    check_sizes(max_img_mb, sizes["images"], "Image")
-    check_sizes(max_vid_mb, sizes["videos"], "Video")
-    check_sizes(max_pdf_mb, sizes["pdfs"], "PDF")
+    _check_sizes(max_img_mb, scan["sizes"]["images"], "Image")
+    _check_sizes(max_vid_mb, scan["sizes"]["videos"], "Video")
+    _check_sizes(max_pdf_mb, scan["sizes"]["pdfs"], "PDF")
 
 
 def _max_submission_zip_bytes(limits: dict[str, Any]) -> int:
@@ -458,17 +405,13 @@ def _validate_submission_input(path: Path) -> None:
             _print_requirement_errors("Submission folder", sec)
             raise SystemExit(1)
         return
-
     zf = _assert_zip(path, "submission")
     try:
         if not _submission_zip_non_empty(zf):
-            console.print(
-                "[red]submission.zip is empty[/red] — add project files before zipping."
-            )
+            console.print("[red]submission.zip is empty[/red] — add project files before zipping.")
             raise SystemExit(1)
     finally:
         zf.close()
-
     req = submission_zip_requirement_violations(path)
     if req:
         _print_requirement_errors("submission.zip", req)
@@ -493,29 +436,23 @@ def _zip_input_to_temp(path: Path, prefix: str) -> Path:
     fd, name = tempfile.mkstemp(prefix=prefix, suffix=".zip")
     os.close(fd)
     dest = Path(name)
-    console.print(f"Zipping {path.name} → {dest.name}...")
+    console.print(f"Zipping {path.name} ...")
     zip_directory(path, dest)
     return dest
 
 
 def validate_submission_thumbnail(path: Path, *, max_image_size_mb: int) -> tuple[bytes, str, str]:
-    """Return (raw bytes, content_type, filename) or exit on validation failure."""
+    """Return (raw bytes, content_type, filename) or raise SystemExit."""
     if not path.is_file():
         console.print(f"[red]Path not found[/red]: {path}")
         raise SystemExit(1)
-    ext = path.suffix.lower()
     ext_to_mime = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".webp": "image/webp", ".gif": "image/gif",
     }
-    content_type = ext_to_mime.get(ext)
+    content_type = ext_to_mime.get(path.suffix.lower())
     if not content_type:
-        console.print(
-            "[red]Unsupported thumbnail type[/red] — use JPEG, PNG, WebP, or GIF."
-        )
+        console.print("[red]Unsupported thumbnail type[/red] — use JPEG, PNG, WebP, or GIF.")
         raise SystemExit(1)
     try:
         size = path.stat().st_size
@@ -527,17 +464,15 @@ def validate_submission_thumbnail(path: Path, *, max_image_size_mb: int) -> tupl
         console.print("[red]Thumbnail file is empty[/red].")
         raise SystemExit(1)
     if size > max_bytes:
-        mb_sz = size / (1024 * 1024)
         console.print(
-            f"[red]Thumbnail too large[/red]: {mb_sz:.1f} MB, limit is {max_image_size_mb} MB."
+            f"[red]Thumbnail too large[/red]: {size / (1024*1024):.1f} MB, limit is {max_image_size_mb} MB."
         )
         raise SystemExit(1)
     try:
-        data = path.read_bytes()
+        return path.read_bytes(), content_type, path.name
     except OSError as e:
         console.print(f"[red]Could not read thumbnail[/red]: {e}")
         raise SystemExit(1)
-    return data, content_type, path.name
 
 
 def submit(
@@ -552,6 +487,7 @@ def submit(
     public_source: bool = False,
     hackathon_id: str | None = None,
 ) -> int:
+    """Validate, preflight, and upload a hackathon submission. Returns exit code."""
     validate_api_key_format(api_key)
     title_clean, description_clean = validate_submission_metadata(title, description)
 
@@ -571,14 +507,12 @@ def submit(
     json_body: dict[str, Any] = {"api_key": api_key}
     if hackathon_id and str(hackathon_id).strip():
         json_body["hackathon_id"] = str(hackathon_id).strip()
+
     with httpx.Client() as client:
         try:
             pr = request_json(client, "POST", pre_url, json_body=json_body)
         except httpx.RequestError as e:
-            console.print(
-                "[red]Unable to reach the Nepher backend[/red]. "
-                f"Check your network connection. ({e})"
-            )
+            console.print(f"[red]Unable to reach the Nepher backend[/red]. Check your network connection. ({e})")
             return 1
 
     if pr.status_code != 200:
@@ -596,12 +530,8 @@ def submit(
             console.print("[bold]Open submission windows:[/bold]")
             for row in err_obj["hackathons"]:
                 if isinstance(row, dict):
-                    hid = row.get("id", "?")
-                    title = row.get("title", "?")
-                    console.print(f"  • [cyan]{hid}[/cyan] — {title}")
-            console.print(
-                "\n[dim]Re-run with[/dim] [bold]--hackathon-id <UUID>[/bold] [dim]to choose one.[/dim]"
-            )
+                    console.print(f"  - [cyan]{row.get('id', '?')}[/cyan] — {row.get('title', '?')}")
+            console.print("\n[dim]Re-run with[/dim] [bold]--hackathon-id <UUID>[/bold] [dim]to choose one.[/dim]")
         else:
             console.print(f"[red]{err}[/red]")
         return 1
@@ -639,55 +569,40 @@ def submit(
 
     cleanup: list[Path] = []
     try:
+        sub_zip = _zip_input_to_temp(submission_path, "nepher-submission-") if submission_path.is_dir() else submission_path
         if submission_path.is_dir():
-            sub_zip = _zip_input_to_temp(submission_path, "nepher-submission-")
             cleanup.append(sub_zip)
-        else:
-            sub_zip = submission_path
 
+        ast_zip = _zip_input_to_temp(assets_path, "nepher-assets-") if assets_path.is_dir() else assets_path
         if assets_path.is_dir():
-            ast_zip = _zip_input_to_temp(assets_path, "nepher-assets-")
             cleanup.append(ast_zip)
-        else:
-            ast_zip = assets_path
 
         max_sub_bytes = _max_submission_zip_bytes(limits)
         sub_size = sub_zip.stat().st_size
         if sub_size > max_sub_bytes:
             max_mb = max_sub_bytes // (1024 * 1024)
-            sub_mb = sub_size / (1024 * 1024)
-            console.print(
-                f"[red]submission.zip is too large[/red] "
-                f"({sub_mb:.1f} MB, max {max_mb} MB)."
-            )
+            console.print(f"[red]submission.zip is too large[/red] ({sub_size / (1024*1024):.1f} MB, max {max_mb} MB).")
             return 1
 
         ast_size = ast_zip.stat().st_size
         if ast_size > max_sub_bytes:
             max_mb = max_sub_bytes // (1024 * 1024)
-            ast_mb = ast_size / (1024 * 1024)
-            console.print(
-                f"[red]assets.zip is too large[/red] "
-                f"({ast_mb:.1f} MB, max {max_mb} MB for this event)."
-            )
+            console.print(f"[red]assets.zip is too large[/red] ({ast_size / (1024*1024):.1f} MB, max {max_mb} MB).")
             return 1
 
-        sub_mb = sub_size / (1024 * 1024)
-        ast_mb = ast_size / (1024 * 1024)
-        upload_bits = f"submission.zip ({sub_mb:.1f} MB) and assets.zip ({ast_mb:.1f} MB)"
+        upload_bits = f"submission.zip ({sub_size/(1024*1024):.1f} MB) and assets.zip ({ast_size/(1024*1024):.1f} MB)"
         if thumb_payload:
             upload_bits += f" and thumbnail ({thumb_payload[2]})"
         console.print(f"Uploading {upload_bits}...")
 
-        up_url = _upload_url(base_url)
-        data: dict[str, str] = {
+        form_data: dict[str, str] = {
             "api_key": api_key,
             "title": title_clean,
             "description": description_clean,
+            "submitter_public_source": "true" if public_source else "false",
         }
         if hackathon_id and str(hackathon_id).strip():
-            data["hackathon_id"] = str(hackathon_id).strip()
-        data["submitter_public_source"] = "true" if public_source else "false"
+            form_data["hackathon_id"] = str(hackathon_id).strip()
 
         with httpx.Client() as client:
             try:
@@ -699,20 +614,12 @@ def submit(
                     if thumb_payload:
                         raw, mime, fname = thumb_payload
                         files["thumbnail"] = (fname, raw, mime)
-                    ur = client.post(
-                        up_url,
-                        data=data,
-                        files=files,
-                        timeout=600.0,
-                    )
+                    ur = client.post(_upload_url(base_url), data=form_data, files=files, timeout=600.0)
             except OSError as e:
                 console.print(f"[red]Could not read zip files[/red]: {e}")
                 return 1
             except httpx.RequestError as e:
-                console.print(
-                    "[red]Unable to reach the Nepher backend[/red]. "
-                    f"Check your network connection. ({e})"
-                )
+                console.print(f"[red]Unable to reach the Nepher backend[/red]. Check your network connection. ({e})")
                 return 1
 
         if ur.status_code in (200, 201):
@@ -722,19 +629,13 @@ def submit(
                 console.print("[red]Unexpected upload response[/red] (invalid JSON).")
                 return 1
             if isinstance(ub, dict):
-                sid = ub.get("submission_id", "?")
-                st = ub.get("status", "?")
-                msg = ub.get("message", "")
                 console.print("[green]Submission uploaded successfully.[/green]")
-                console.print(f"  Submission ID: [bold]{sid}[/bold]")
-                console.print(f"  Status: {st} (pending review)")
-                if msg:
-                    console.print(f"  {msg}")
+                console.print(f"  Submission ID: [bold]{ub.get('submission_id', '?')}[/bold]")
+                console.print(f"  Status: {ub.get('status', '?')} (pending review)")
+                if ub.get("message"):
+                    console.print(f"  {ub['message']}")
                 _print_quota_line("Remaining after this upload", ub)
-                console.print(
-                    "\n[dim]Your submission is now being reviewed. "
-                    "Check your dashboard for updates.[/dim]"
-                )
+                console.print("\n[dim]Your submission is now being reviewed. Check your dashboard for updates.[/dim]")
                 return 0
 
         err = parse_error_body(ur.text) or ur.text.strip() or f"HTTP {ur.status_code}"
@@ -743,3 +644,117 @@ def submit(
     finally:
         for p in cleanup:
             p.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Click command group
+# ---------------------------------------------------------------------------
+
+
+@click.group("hackathon")
+def hackathon() -> None:
+    """Browse and submit to Nepher hackathons."""
+
+
+@hackathon.command("list")
+@click.option("--json", "output_json", is_flag=True, help="Output raw JSON.")
+def hackathon_list(output_json: bool) -> None:
+    """List all hackathons (open, upcoming, and completed).
+
+    The endpoint is public — no authentication required.
+    """
+    url = f"{HACKATHON_BACKEND.rstrip('/')}/api/v1/hackathons/"
+    try:
+        r = httpx.get(url, timeout=30.0)
+    except httpx.RequestError as e:
+        console.print(f"[red]Unable to reach the Nepher backend[/red] ({e}).")
+        raise SystemExit(1) from e
+
+    if r.status_code != 200:
+        console.print(f"[red]{parse_error_body(r.text) or r.text.strip() or f'HTTP {r.status_code}'}[/red]")
+        raise SystemExit(1)
+
+    try:
+        data = r.json()
+    except Exception:
+        console.print("[red]Unexpected response (invalid JSON).[/red]")
+        raise SystemExit(1)
+
+    if output_json:
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    items: list[dict[str, Any]] = data if isinstance(data, list) else data.get("results", data.get("hackathons", []))
+
+    if not items:
+        console.print("[dim]No hackathons found.[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None)
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Phase")
+    table.add_column("Submission Deadline")
+
+    for h in items:
+        table.add_row(
+            str(h.get("id", "")),
+            h.get("title") or "—",
+            h.get("current_phase") or h.get("phase") or "—",
+            str(h.get("submission_deadline") or h.get("submission_end") or "—"),
+        )
+
+    from rich import print as rprint
+    rprint(table)
+    console.print(f"\n[dim]{len(items)} hackathon(s) listed.[/dim]")
+
+
+@hackathon.command("submit")
+@click.option(
+    "--api-key", "--apikey", "api_key",
+    default=None, envvar="NEPHER_API_KEY", metavar="KEY",
+    help="Nepher API key (nepher_...). Falls back to stored credentials.",
+)
+@click.option("--hackathon-id", default=None, metavar="UUID", help="Target hackathon UUID (required when multiple are open).")
+@click.option("--submission", required=True, metavar="PATH", help="Project folder or existing submission.zip.")
+@click.option("--assets", required=True, metavar="PATH", help="Assets folder or assets.zip (images, videos, PDFs only).")
+@click.option("--title", required=True, metavar="TEXT", help="Entry title (max 200 characters).")
+@click.option("--description", default="", metavar="TEXT", help="Optional Markdown description.")
+@click.option("--thumbnail", default=None, metavar="PATH", help="Optional listing image (JPEG, PNG, WebP, or GIF).")
+@click.option("--public-source", is_flag=True, help="Opt in to public source download when the event allows it.")
+def hackathon_submit(
+    api_key: str | None,
+    hackathon_id: str | None,
+    submission: str,
+    assets: str,
+    title: str,
+    description: str,
+    thumbnail: str | None,
+    public_source: bool,
+) -> None:
+    """Upload a project and assets to a hackathon.
+
+    The CLI validates your files locally, runs a preflight check against the
+    hackathon's limits, then uploads submission.zip and assets.zip.
+    """
+    resolved_key = api_key or get_stored_api_key()
+    if not resolved_key:
+        console.print(
+            "[red]No API key available.[/red] "
+            "Pass [bold]--api-key[/bold] or run [bold]npcli account login[/bold] first."
+        )
+        raise SystemExit(1)
+
+    raise SystemExit(
+        submit(
+            resolved_key,
+            Path(submission),
+            Path(assets),
+            HACKATHON_BACKEND,
+            title=title,
+            description=description,
+            thumbnail=Path(thumbnail) if thumbnail else None,
+            public_source=public_source,
+            hackathon_id=hackathon_id,
+        )
+    )
