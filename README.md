@@ -1,16 +1,8 @@
-# npcli — Unified Nepher CLI
+# nepher-cli
 
-The unified command-line interface for [Nepher](https://nepher.ai)'s ecosystem — accounts, hackathons, EnvHub, Bittensor Subnet 49, tournaments, and SimStore, all from a single tool.
+The unified CLI for [Nepher Robotics](https://nepher.ai) — accounts, hackathons, EnvHub, tournaments, and SimStore from a single tool.
 
-**Requirements:** Python 3.10+
-
-| Command group | What it does | Extra tooling |
-|---------------|--------------|---------------|
-| `npcli account` | Login, API keys, coldkey registration | [`btcli`](https://github.com/opentensor/bittensor) for coldkey |
-| `npcli hackathon` | Browse hackathons and upload submissions | — |
-| `npcli envhub` | Manage Isaac Lab environment bundles | Isaac Lab for `view` |
-| `npcli tournament` | Browse tournaments, leaderboards, validate and submit agents | `nepher-subnet` + `bittensor` for validate/submit only |
-| `npcli simstore` | SimStore marketplace *(coming soon)* | — |
+**Requires:** Python 3.10+
 
 ## Install
 
@@ -18,143 +10,99 @@ The unified command-line interface for [Nepher](https://nepher.ai)'s ecosystem �
 pip install nepher-cli
 ```
 
-Verify the install:
+Both `npcli` and `nepher-cli` entry points are registered after install.
 
 ```bash
 npcli --version
 npcli --help
 ```
 
-Both `npcli` and `nepher-cli` point to the same tool after install.
+## Commands
 
-## Quick start
+| Group | Description |
+|-------|-------------|
+| `npcli account` | Login, API keys, coldkey registration |
+| `npcli tournament` | Browse tournaments, submit agents, leaderboards |
+| `npcli envhub` | Manage Isaac Lab environment bundles |
+| `npcli hackathon` | Browse and submit to hackathons |
+| `npcli simstore` | SimStore marketplace *(coming soon)* |
 
-### 1. Log in
+## Quick Start
 
-Store credentials locally so you don't need to pass `--api-key` on every command:
-
-```bash
-npcli account login
-# Prompts for your API key (created at account.nepher.ai)
-```
-
-Or pass the key inline:
+### Authenticate
 
 ```bash
 npcli account login --api-key nepher_xxxxxxxx
-```
-
-Check who you're logged in as:
-
-```bash
 npcli account whoami
-```
-
-Log out and clear stored credentials:
-
-```bash
 npcli account logout
 ```
 
-### 2. Browse hackathons
+Get your API key at [account.nepher.ai](https://account.nepher.ai) → Account → API Keys.  
+For CI/CD, set `NEPHER_API_KEY=nepher_xxxxxxxx` instead of logging in.
+
+### Tournaments
+
+```bash
+npcli tournament list
+npcli tournament list-active
+npcli tournament status <tournament_id>
+npcli tournament leaderboard <tournament_id>
+```
+
+Agent validation and submission (requires `nepher-subnet` + `bittensor`):
+
+```bash
+npcli tournament validate --path ./my-agent
+npcli tournament submit --path ./my-agent --wallet-name miner --wallet-hotkey default
+```
+
+Full options for `submit`:
+
+```
+--path <path>               Agent directory
+--wallet-name <str>         Bittensor wallet name (default: miner)
+--wallet-hotkey <str>       Bittensor wallet hotkey (default: default)
+--api-key <key>             Nepher API key (falls back to stored credentials)
+--tournament-id <id>        Target tournament ID (required when multiple are active)
+--api-url <url>             Override tournament API URL
+-v / --verbose              Verbose output
+```
+
+### EnvHub
+
+```bash
+npcli envhub list
+npcli envhub download <env_id>
+npcli envhub upload ./my-bundle --category navigation
+npcli envhub cache list
+npcli envhub cache info
+npcli envhub cache clear
+```
+
+### Hackathons
 
 ```bash
 npcli hackathon list
-```
 
-### 3. Submit to a hackathon
-
-Upload your project and assets (folders are zipped automatically):
-
-```bash
 npcli hackathon submit \
   --title "My entry" \
   --submission ./my-project \
   --assets ./my-assets
 ```
 
-With all optional flags:
+Full options:
 
-```bash
-npcli hackathon submit \
-  --hackathon-id <uuid> \
-  --title "My entry" \
-  --description "Markdown summary for your entry page." \
-  --thumbnail ./cover.png \
-  --submission ./my-project \
-  --assets ./my-assets \
-  --public-source
+```
+--hackathon-id <uuid>       Required when multiple hackathons are open
+--title <str>               Entry title
+--description <markdown>    Entry description
+--thumbnail <file>          Cover image (JPEG, PNG, WebP, GIF)
+--submission <path>         Project folder or submission.zip
+--assets <path>             Assets folder or assets.zip (images, videos, PDFs)
+--public-source             Mark source as public
 ```
 
-- **`--hackathon-id`** — required when multiple hackathons are open simultaneously; the available UUIDs are printed if you omit it and ambiguity is detected.
-- **`--thumbnail`** — optional listing image (JPEG, PNG, WebP, or GIF).
-
-### 4. Register a Bittensor coldkey
-
-Bind or replace the coldkey on your Nepher account (requires `btcli` on PATH):
-
-```bash
-npcli account register-coldkey --wallet <wallet_name>
-```
-
-### 5. EnvHub — Isaac Lab environments
-
-```bash
-npcli envhub list                           # browse available bundles
-npcli envhub download <env_id>             # cache locally
-npcli envhub upload ./my-bundle --category navigation
-npcli envhub cache list                    # show cached environments
-npcli envhub cache info                    # disk usage
-npcli envhub cache clear                   # remove all cached bundles
-```
-
-### 6. Tournaments
-
-```bash
-npcli tournament list                            # all tournaments
-npcli tournament status <tournament_id>          # details
-npcli tournament leaderboard <tournament_id>     # score table
-```
-
-```bash
-npcli tournament list-active                       # active tournaments + submit windows
-```
-
-Agent validation and submission (requires `nepher-subnet` and `bittensor`):
-
-```bash
-npcli tournament validate --path ./my-agent          # check structure
-npcli tournament submit --path ./my-agent \
-  --wallet-name miner --wallet-hotkey default
-```
-
-Your Nepher account is identified by your API key (from `npcli account login`, `NEPHER_API_KEY`, or `--api-key`). The wallet hotkey is used only to sign the submission archive.
-
-```bash
-# Explicit API key (CI/CD or when not logged in locally)
-npcli tournament submit --path ./my-agent \
-  --api-key nepher_xxxxxxxx \
-  --wallet-name miner --wallet-hotkey default
-```
-
-## API keys
-
-Create a key at [account.nepher.ai](https://account.nepher.ai) (Account > API Keys):
-
-- Must start with `nepher_`
-- Must be **active** (not revoked) and **not expired**
-- For `hackathon submit`, enable **Hackathon** access (or use an unrestricted key)
-- For `tournament submit`, enable **Tournament** access (or use an unrestricted key)
-
-After `npcli account login`, the key is stored securely and reused automatically. For CI/CD, set the environment variable instead:
-
-```bash
-export NEPHER_API_KEY=nepher_xxxxxxxx
-npcli hackathon submit --title "CI build" --submission ./dist --assets ./assets
-npcli tournament submit --path ./my-agent --wallet-name miner --wallet-hotkey default
-```
-
-## Manage API keys from the CLI
+### API Keys
 
 ```bash
 npcli account api-keys list
@@ -162,43 +110,38 @@ npcli account api-keys create --name "CI key" --platform hackertone
 npcli account api-keys revoke <key_id>
 ```
 
-## Services
+### Coldkey Registration
 
-| Platform | Base URL | Commands |
-|----------|----------|----------|
-| Account | `account-api.nepher.ai` | `account` |
-| Hackathon | `api.hackathon.nepher.ai` | `hackathon` |
-| EnvHub | `envhub-api.nepher.ai` | `envhub` |
-| Tournament | `tournament-api.nepher.ai` | `tournament` |
-| SimStore | `api.simstore.nepher.ai` | `simstore` *(coming soon)* |
+Bind a Bittensor coldkey to your account (requires `btcli` on PATH):
 
-## Notes
+```bash
+npcli account register-coldkey --wallet <wallet_name>
+```
 
-- You do **not** need a registered coldkey to submit a hackathon entry. A coldkey is used for stake-weighted community voting when an event requires it.
-- `--submission` accepts a project folder (recommended) or an existing `submission.zip`.
-- `--assets` accepts a folder or `assets.zip` with images, videos, and PDFs only.
-- The `nepher` command (standalone EnvHub CLI) is unaffected — it continues to work as before. `npcli envhub` provides the same operations in the unified interface.
+## API Key Requirements
 
-## Common problems
+- Must start with `nepher_`
+- Must be active and not expired
+- `hackathon submit` requires **Hackathon** scope (or an unrestricted key)
+- `tournament submit` requires **Tournament** scope (or an unrestricted key)
 
-| Problem | What to do |
-|---------|------------|
-| `npcli: command not found` | Ensure `pip install` succeeded and your Python scripts directory is on `PATH` |
+## Troubleshooting
+
+| Error | Fix |
+|-------|-----|
+| `npcli: command not found` | Ensure `pip install` succeeded and Python scripts dir is on `PATH` |
 | `invalid api key format` | Key must start with `nepher_` |
-| `api key does not have hackathon access` | Enable **Hackathon** on the key or use an unrestricted key |
-| `api key expired` | Create a new key with a later expiry or run `npcli account api-keys create` |
-| `btcli` / wallet not found | Run `btcli wallet list`; check `--wallet` name |
-| `Several hackathons are accepting submissions` | Re-run with `--hackathon-id` from the listed UUIDs |
-| `Unable to reach the Nepher backend` | Check your network connection |
-| `nepher_core / miner not available` | Install `nepher-subnet`: `pip install -e path/to/nepher-subnet` |
-| `Not logged in` | Run `npcli account login --api-key nepher_...` |
+| `api key does not have hackathon access` | Enable Hackathon scope or use an unrestricted key |
+| `api key expired` | Run `npcli account api-keys create` |
+| `Several hackathons are accepting submissions` | Re-run with `--hackathon-id` |
+| `nepher_core / miner not available` | `pip install -e path/to/nepher-subnet` |
+| `Not logged in` | `npcli account login --api-key nepher_...` |
 
-For full flag reference, run any command with `--help`:
+Run any command with `--help` for full flag details:
 
 ```bash
 npcli --help
 npcli hackathon submit --help
-npcli envhub --help
 npcli tournament submit --help
 ```
 
