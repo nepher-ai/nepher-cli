@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,31 +20,12 @@ from rich.table import Table
 from nepher_cli.config import TOURNAMENT_BACKEND
 from nepher_cli.core.credentials import get_auth_headers, get_stored_api_key
 from nepher_cli.core.http import parse_error_body
+from nepher_cli.tournament.agent_check import check_agent_structure
+from nepher_cli.tournament import api as tournament_api
+from nepher_cli.tournament.packer import compute_checksum, get_file_size, zip_directory
+from nepher_cli.tournament.wallet import prepare_submission_credentials
 
 console = Console(stderr=True)
-
-_NEPHER_CORE_HINT = (
-    "Agent validate/submit commands require [bold]nepher-subnet[/bold] and its dependencies "
-    "(bittensor, nepher_core).\n\n"
-    "Install them from the nepher-subnet repository:\n"
-    "  [bold]pip install -e path/to/nepher-subnet[/bold]\n\n"
-    "Or install bittensor directly:\n"
-    "  [bold]pip install bittensor[/bold]"
-)
-
-
-def _require_nepher_core() -> tuple:
-    """Return (submit_agent, validate_agent_structure, list_active_tournaments) or exit."""
-    try:
-        from miner.submit import (  # type: ignore[import]
-            list_active_tournaments,
-            submit_agent,
-            validate_agent_structure,
-        )
-        return submit_agent, validate_agent_structure, list_active_tournaments
-    except ImportError:
-        console.print(f"[red]nepher_core / miner not available.[/red]\n\n{_NEPHER_CORE_HINT}")
-        raise SystemExit(1)
 
 
 def _resolve_api_key(api_key: str | None) -> str:
@@ -486,23 +468,25 @@ def tournament_leaderboard(tournament_id: str, limit: int, output_json: bool) ->
     rprint(table)
 
 
-@tournament.command("validate")
+@tournament.command("check")
 @click.option("--path", "agent_path", type=click.Path(), required=True, help="Path to agent directory.")
-@click.option("--verbose", "-v", is_flag=True, help="Verbose output.")
-def tournament_validate(agent_path: str, verbose: bool) -> None:
-    """Validate local agent structure without submitting.
+@click.option("--verbose", "-v", is_flag=True, help="Show warnings for missing recommended files.")
+def tournament_check(agent_path: str, verbose: bool) -> None:
+    """Check local agent directory structure without submitting.
 
-    Checks for required files (best_policy/best_policy.pt, source/) and warns
-    about missing optional files (scripts/rsl_rl/play.py, etc.).
+    Verifies required files (best_policy/best_policy.pt, source/) and warns
+    about missing recommended files (scripts/rsl_rl/play.py, etc.).
 
-    Requires [bold]nepher-subnet[/bold] to be installed.
+    No extra dependencies required — runs entirely offline.
     """
-    _, validate_agent_structure, _ = _require_nepher_core()
-
     path = Path(agent_path)
     console.print(f"Validating agent at [bold]{path}[/bold]...")
 
-    is_valid, errors = validate_agent_structure(path)
+    is_valid, errors, warnings = check_agent_structure(path)
+
+    if warnings and verbose:
+        for w in warnings:
+            console.print(f"  [yellow]warning:[/yellow] {w}")
 
     if is_valid:
         console.print("[green]Agent structure is valid.[/green]")
@@ -540,16 +524,18 @@ def tournament_submit(
     Your Nepher account is identified by the API key (--api-key, NEPHER_API_KEY,
     or credentials from npcli account login). The wallet hotkey signs the archive.
 
-    Requires nepher-subnet (and bittensor) to be installed.
+    Requires [bold]bittensor[/bold] for wallet signing:
+      pip install bittensor
     """
-    submit_agent, validate_agent_structure, _ = _require_nepher_core()
-
     resolved_key = _resolve_api_key(api_key)
     resolved_url = api_url or TOURNAMENT_BACKEND
     path = Path(agent_path)
 
-    console.print("Validating agent structure...")
-    is_valid, errors = validate_agent_structure(path)
+    console.print("Checking agent structure...")
+    is_valid, errors, warnings = check_agent_structure(path)
+    if warnings and verbose:
+        for w in warnings:
+            console.print(f"  [yellow]warning:[/yellow] {w}")
     if not is_valid:
         console.print("[red]Agent validation failed:[/red]")
         for err in errors:
@@ -557,24 +543,55 @@ def tournament_submit(
         raise SystemExit(1)
     console.print("[green]Agent structure valid.[/green]")
 
-    try:
-        from nepher_core.utils.logging import setup_logging  # type: ignore[import]
-        setup_logging(level="DEBUG" if verbose else "INFO")
-    except ImportError:
-        pass
-
     async def _run() -> int:
-        console.print("Submitting agent...")
         try:
-            agent_id = await submit_agent(
-                agent_path=path,
-                wallet_name=wallet_name,
-                wallet_hotkey=wallet_hotkey,
-                api_key=resolved_key,
-                api_url=resolved_url,
-                tournament_id=tournament_id,
+            with tempfile.TemporaryDirectory() as tmpdir:
+                archive = Path(tmpdir) / "agent.zip"
+
+                console.print("Creating submission archive...")
+                zip_directory(path, archive)
+                content_hash = compute_checksum(archive)
+                file_size = get_file_size(archive)
+                if verbose:
+                    console.print(
+                        f"  [dim]Archive: {file_size:,} bytes, "
+                        f"sha256: {content_hash[:16]}...[/dim]"
+                    )
+
+                console.print("Signing with wallet...")
+                miner_hotkey, public_key, file_info, signature = (
+                    prepare_submission_credentials(wallet_name, wallet_hotkey, content_hash)
+                )
+
+                console.print("Requesting upload token...")
+                token_data = await tournament_api.request_upload_token(
+                    api_key=resolved_key,
+                    api_url=resolved_url,
+                    miner_hotkey=miner_hotkey,
+                    public_key=public_key,
+                    file_info=file_info,
+                    signature=signature,
+                    file_size=file_size,
+                    tournament_id=tournament_id,
+                )
+                resolved_tournament_id = token_data["tournament_id"]
+                upload_token = token_data["upload_token"]
+
+                console.print("Uploading agent...")
+                agent_id = await tournament_api.upload_agent(
+                    api_key=resolved_key,
+                    api_url=resolved_url,
+                    tournament_id=resolved_tournament_id,
+                    upload_token=upload_token,
+                    miner_hotkey=miner_hotkey,
+                    content_hash=content_hash,
+                    file_path=archive,
+                )
+
+            console.print(
+                f"[green]Agent submitted successfully.[/green] "
+                f"Agent ID: [bold]{agent_id}[/bold]"
             )
-            console.print(f"[green]Agent submitted successfully.[/green] Agent ID: [bold]{agent_id}[/bold]")
             return 0
         except Exception as e:
             console.print(f"[red]Submission failed:[/red] {e}")
@@ -588,7 +605,7 @@ def tournament_submit(
 def tournament_list_active(api_url: str | None) -> None:
     """List active tournaments and whether they accept submissions.
 
-    Public endpoint — no login or nepher-subnet install required.
+    Public endpoint — no login required.
     """
     base = (api_url or TOURNAMENT_BACKEND).rstrip("/")
     url = f"{base}/api/v1/tournaments/active/list"

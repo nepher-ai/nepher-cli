@@ -29,6 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+bittensor = ["bittensor"]
 dev = [
   "pytest>=8.0.0",
   "ruff>=0.4.0",

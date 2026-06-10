@@ -49,10 +49,21 @@ npcli tournament status <tournament_id>
 npcli tournament leaderboard <tournament_id>
 ```
 
-Agent validation and submission (requires `nepher-subnet` + `bittensor`):
+Check your agent directory structure (no extra dependencies needed):
 
 ```bash
-npcli tournament validate --path ./my-agent
+npcli tournament check --path ./my-agent
+npcli tournament check --path ./my-agent --verbose   # also show recommended-file warnings
+```
+
+Submit an agent (requires `bittensor` for wallet signing):
+
+```bash
+pip install bittensor
+# or: pip install "nepher-cli[bittensor]"
+```
+
+```bash
 npcli tournament submit --path ./my-agent --wallet-name miner --wallet-hotkey default
 ```
 
@@ -112,9 +123,10 @@ npcli account api-keys revoke <key_id>
 
 ### Coldkey Registration
 
-Bind a Bittensor coldkey to your account (requires `btcli` on PATH):
+Bind a Bittensor coldkey to your account (requires `bittensor` + `btcli` on PATH):
 
 ```bash
+pip install bittensor
 npcli account register-coldkey --wallet <wallet_name>
 ```
 
@@ -134,7 +146,7 @@ npcli account register-coldkey --wallet <wallet_name>
 | `api key does not have hackathon access` | Enable Hackathon scope or use an unrestricted key |
 | `api key expired` | Run `npcli account api-keys create` |
 | `Several hackathons are accepting submissions` | Re-run with `--hackathon-id` |
-| `nepher_core / miner not available` | `pip install -e path/to/nepher-subnet` |
+| `bittensor not installed` | `pip install bittensor` (only needed for `tournament submit`) |
 | `Not logged in` | `npcli account login --api-key nepher_...` |
 
 Run any command with `--help` for full flag details:
