@@ -19,9 +19,12 @@ npcli --help
 
 ## Commands
 
-| Group | Description |
-|-------|-------------|
-| `npcli account` | Login, API keys, coldkey registration |
+| Command / Group | Description |
+|-----------------|-------------|
+| `npcli login` | Log in with a Nepher API key |
+| `npcli whoami` | Show the currently authenticated user |
+| `npcli logout` | Clear locally stored credentials |
+| `npcli account` | API keys and coldkey registration |
 | `npcli tournament` | Browse tournaments, submit agents, leaderboards |
 | `npcli envhub` | Manage Isaac Lab environment bundles |
 | `npcli hackathon` | Browse and submit to hackathons |
@@ -32,9 +35,9 @@ npcli --help
 ### Authenticate
 
 ```bash
-npcli account login --api-key nepher_xxxxxxxx
-npcli account whoami
-npcli account logout
+npcli login --api-key nepher_xxxxxxxx
+npcli whoami
+npcli logout
 ```
 
 Get your API key at [account.nepher.ai](https://account.nepher.ai) → Account → API Keys.  
@@ -147,7 +150,7 @@ npcli account register-coldkey --wallet <wallet_name>
 | `api key expired` | Run `npcli account api-keys create` |
 | `Several hackathons are accepting submissions` | Re-run with `--hackathon-id` |
 | `bittensor not installed` | `pip install bittensor` (only needed for `tournament submit`) |
-| `Not logged in` | `npcli account login --api-key nepher_...` |
+| `Not logged in` | `npcli login --api-key nepher_...` |
 
 Run any command with `--help` for full flag details:
 

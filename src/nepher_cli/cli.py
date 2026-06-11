@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 
 from nepher_cli import __version__
-from nepher_cli.commands.account import account
+from nepher_cli.commands.account import account, cmd_login, cmd_logout, cmd_whoami
 from nepher_cli.commands.envhub import envhub
 from nepher_cli.commands.hackathon import hackathon
 from nepher_cli.commands.simstore import simstore
@@ -22,7 +22,10 @@ def main() -> None:
     Provides centralized access to all Nepher sub-platforms:
 
     \b
-      account     Login, API keys, and coldkey registration
+      login       Log in with a Nepher API key
+      whoami      Show the currently authenticated user
+      logout      Clear locally stored credentials
+      account     API keys and coldkey registration
       tournament  Browse tournaments, submit agents, leaderboards
       envhub      Manage Isaac Lab environment bundles
       hackathon   Browse and submit to hackathons
@@ -30,8 +33,8 @@ def main() -> None:
 
     \b
     Quick start:
-      npcli account login --api-key nepher_xxxxxxxx
-      npcli account whoami
+      npcli login --api-key nepher_xxxxxxxx
+      npcli whoami
       npcli hackathon list
       npcli envhub list
       npcli tournament list
@@ -42,6 +45,9 @@ def main() -> None:
     """
 
 
+main.add_command(cmd_login, name="login")
+main.add_command(cmd_logout, name="logout")
+main.add_command(cmd_whoami, name="whoami")
 main.add_command(account)
 main.add_command(tournament)
 main.add_command(envhub)
