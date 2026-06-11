@@ -23,9 +23,9 @@ def main() -> None:
 
     \b
       account     Login, API keys, and coldkey registration
-      hackathon   Browse and submit to hackathons
-      envhub      Manage Isaac Lab environment bundles
       tournament  Browse tournaments, submit agents, leaderboards
+      envhub      Manage Isaac Lab environment bundles
+      hackathon   Browse and submit to hackathons
       simstore    SimStore marketplace (coming soon)
 
     \b
@@ -43,9 +43,9 @@ def main() -> None:
 
 
 main.add_command(account)
-main.add_command(hackathon)
-main.add_command(envhub)
 main.add_command(tournament)
+main.add_command(envhub)
+main.add_command(hackathon)
 main.add_command(simstore)
 
 

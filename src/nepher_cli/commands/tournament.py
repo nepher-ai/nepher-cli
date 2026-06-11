@@ -588,10 +588,19 @@ def tournament_submit(
                     file_path=archive,
                 )
 
-            console.print(
-                f"[green]Agent submitted successfully.[/green] "
-                f"Agent ID: [bold]{agent_id}[/bold]"
-            )
+            t_title = _tournament_title(token_data)
+            t_task = _tournament_task_name(token_data)
+            t_version = _tournament_versions(token_data)
+
+            console.print("[green]Agent submitted successfully.[/green]")
+            console.print(f"  Agent ID     : [bold]{agent_id}[/bold]")
+            console.print(f"  Tournament ID: [bold]{resolved_tournament_id}[/bold]")
+            if t_title and t_title != "—":
+                console.print(f"  Title        : {t_title}")
+            if t_task and t_task != "—":
+                console.print(f"  Task         : {t_task}")
+            if t_version and t_version != "—":
+                console.print(f"  Version      : {t_version}")
             return 0
         except Exception as e:
             console.print(f"[red]Submission failed:[/red] {e}")
