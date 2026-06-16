@@ -247,10 +247,14 @@ def envhub_upload(path: str, category: str, benchmark: bool, force: bool, thumbn
             data_fields["force"] = "true"
 
         with open(upload_path, "rb") as f:
-            files: dict[str, Any] = {"file": (upload_path.name, f, "application/zip")}
+            files: dict[str, Any] = {"bundle": (upload_path.name, f, "application/zip")}
             if thumbnail:
                 thumb_path = Path(thumbnail)
-                files["thumbnail"] = (thumb_path.name, open(thumbnail, "rb"), "image/jpeg")
+                suffix = thumb_path.suffix.lower()
+                content_type = "image/png" if suffix == ".png" else ("image/webp" if suffix == ".webp" else "image/jpeg")
+                files["thumbnail"] = (thumb_path.name, open(thumbnail, "rb"), content_type)
+
+            data_fields["duplicate_policy"] = "reject"
 
             try:
                 r = httpx.post(
