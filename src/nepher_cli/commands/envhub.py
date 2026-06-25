@@ -147,11 +147,22 @@ def envhub_list(
 @click.argument("env_id")
 @click.option("--cache-dir", type=click.Path(), default=None, help="Override local cache directory.")
 @click.option("--force", is_flag=True, help="Re-download even if already cached.")
-@click.option("--api-key", "api_key", default=None, envvar="NEPHER_API_KEY")
+@click.option(
+    "--api-key",
+    "api_key",
+    default=None,
+    envvar="NEPHER_API_KEY",
+    help="API key for authentication. Sent directly as X-API-Key so the "
+    "download succeeds regardless of any cached access-token expiry.",
+)
 def envhub_download(env_id: str, cache_dir: str | None, force: bool, api_key: str | None) -> None:
     """Download an environment bundle and cache it locally.
 
     The bundle is extracted to ~/.nepher/cache/<env_id>/ by default.
+
+    When ``--api-key`` (or the ``NEPHER_API_KEY`` env var) is provided, the key
+    is sent directly to EnvHub, which verifies it against account-backend — the
+    download therefore works even if a previously cached JWT has expired.
     """
     cache_root = resolve_cache_dir(cache_dir)
     env_cache = cache_root / env_id
