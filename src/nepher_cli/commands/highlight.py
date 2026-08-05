@@ -269,11 +269,7 @@ def _set_status(
 def highlight_publish(
     highlight_id: str, api_key: str | None, api_url: str | None, output_json: bool
 ) -> None:
-    """Publish a draft highlight.
-
-    Final (private-phase) clips stay hidden from the public feed until the
-    tournament reaches its review stage.
-    """
+    """Publish a draft highlight to the public feed."""
     _set_status(highlight_id, "published", api_key, api_url, output_json)
 
 
