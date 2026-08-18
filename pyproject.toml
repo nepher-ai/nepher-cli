@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<1.32"]
 build-backend = "hatchling.build"
 
 [project]
 name = "nepher-cli"
-version = "0.2.2"
+version = "0.2.3"
 description = "npcli — unified Nepher command-line interface for accounts, hackathons, EnvHub, tournaments, and SimStore"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,9 +44,11 @@ Homepage = "https://github.com/nepher-ai/nepher-cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nepher_cli"]
+core-metadata-version = "2.4"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/nepher_cli", "README.md", "pyproject.toml"]
+core-metadata-version = "2.4"
 
 [tool.ruff]
 line-length = 100
