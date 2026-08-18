@@ -67,6 +67,20 @@ def authed_post(
         return client.post(url, headers=headers, json=json_body, timeout=timeout)
 
 
+def authed_patch(
+    url: str,
+    *,
+    api_key: str | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> httpx.Response:
+    """PATCH with auth headers resolved from credential store or override."""
+    from nepher_cli.core.credentials import get_auth_headers
+
+    headers = get_auth_headers(api_key)
+    with httpx.Client() as client:
+        return client.patch(url, headers=headers, json=json_body, timeout=60.0)
+
+
 def authed_delete(url: str, *, api_key: str | None = None) -> httpx.Response:
     """DELETE with auth headers resolved from credential store or override."""
     from nepher_cli.core.credentials import get_auth_headers
