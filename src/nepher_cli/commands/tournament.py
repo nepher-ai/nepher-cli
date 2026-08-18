@@ -528,8 +528,8 @@ def tournament_submit(
     Your Nepher account is identified by the API key (--api-key, NEPHER_API_KEY,
     or credentials from npcli account login). The wallet hotkey signs the archive.
 
-    Requires [bold]bittensor[/bold] for wallet signing:
-      pip install bittensor
+    Requires [bold]bittensor-wallet[/bold] for wallet signing:
+      pip install bittensor-wallet
     """
     resolved_key = _resolve_api_key(api_key)
     resolved_url = api_url or TOURNAMENT_BACKEND

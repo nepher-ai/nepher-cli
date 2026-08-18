@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bittensor = ["bittensor"]
+bittensor = ["bittensor-wallet>=4.1.0"]
 dev = [
   "pytest>=8.0.0",
   "ruff>=0.4.0",

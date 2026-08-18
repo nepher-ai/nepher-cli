@@ -5,9 +5,9 @@ from __future__ import annotations
 import time
 
 _BITTENSOR_HINT = (
-    "Agent submission requires [bold]bittensor[/bold] for wallet signing.\n\n"
+    "Agent submission requires [bold]bittensor-wallet[/bold] for wallet signing.\n\n"
     "Install it with:\n"
-    "  [bold]pip install bittensor[/bold]\n\n"
+    "  [bold]pip install bittensor-wallet[/bold]\n\n"
     "Or if you installed nepher-cli via pip:\n"
     "  [bold]pip install \"nepher-cli[bittensor]\"[/bold]"
 )
@@ -26,7 +26,7 @@ def _require_wallet_class():
     except ImportError:
         from rich.console import Console
         Console(stderr=True).print(
-            f"[red]bittensor not installed.[/red]\n\n{_BITTENSOR_HINT}"
+            f"[red]bittensor-wallet not installed.[/red]\n\n{_BITTENSOR_HINT}"
         )
         raise SystemExit(1)
 
