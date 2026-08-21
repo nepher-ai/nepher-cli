@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<1.32"]
 build-backend = "hatchling.build"
 
 [project]
@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bittensor = ["bittensor"]
+bittensor = ["bittensor-wallet>=4.1.0"]
 dev = [
   "pytest>=8.0.0",
   "ruff>=0.4.0",
@@ -44,9 +44,11 @@ Homepage = "https://github.com/nepher-ai/nepher-cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nepher_cli"]
+core-metadata-version = "2.4"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/nepher_cli", "README.md", "pyproject.toml"]
+core-metadata-version = "2.4"
 
 [tool.ruff]
 line-length = 100

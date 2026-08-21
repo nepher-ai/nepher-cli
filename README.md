@@ -59,10 +59,10 @@ npcli tournament check --path ./my-agent
 npcli tournament check --path ./my-agent --verbose   # also show recommended-file warnings
 ```
 
-Submit an agent (requires `bittensor` for wallet signing):
+Submit an agent (requires `bittensor-wallet` for wallet signing):
 
 ```bash
-pip install bittensor
+pip install bittensor-wallet
 # or: pip install "nepher-cli[bittensor]"
 ```
 
@@ -126,12 +126,14 @@ npcli account api-keys revoke <key_id>
 
 ### Coldkey Registration
 
-Bind a Bittensor coldkey to your account (requires `bittensor` + `btcli` on PATH):
+Bind a Bittensor coldkey to your account (requires `bittensor-wallet`; `btcli` is optional fallback):
 
 ```bash
-pip install bittensor
+pip install bittensor-wallet
 npcli account register-coldkey --wallet <wallet_name>
 ```
+
+Signing uses the local coldkey via `bittensor-wallet` and does not import `btcli`. If you still have a mixed Bittensor venv (`scalecodec` + `cyscale`), `register-coldkey` keeps working as long as `bittensor-wallet` is installed.
 
 ## API Key Requirements
 
@@ -149,8 +151,9 @@ npcli account register-coldkey --wallet <wallet_name>
 | `api key does not have hackathon access` | Enable Hackathon scope or use an unrestricted key |
 | `api key expired` | Run `npcli account api-keys create` |
 | `Several hackathons are accepting submissions` | Re-run with `--hackathon-id` |
-| `bittensor not installed` | `pip install bittensor` (only needed for `tournament submit`) |
+| `bittensor-wallet not installed` | `pip install bittensor-wallet` (needed for `tournament submit` and `account register-coldkey`) |
 | `Not logged in` | `npcli login --api-key nepher_...` |
+| `Conflict detected: 'scalecodec' ... conflicts with 'cyscale'` | Leftover `scalecodec` after a Bittensor upgrade. Prefer `pip install bittensor-wallet` so npcli never needs `btcli`. To repair `btcli` itself: `pip uninstall scalecodec cyscale -y && pip install -U cyscale --force-reinstall` |
 
 Run any command with `--help` for full flag details:
 

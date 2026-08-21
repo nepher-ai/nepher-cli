@@ -35,6 +35,25 @@ console = Console(stderr=True)
 
 BTCLI_SIGN_TIMEOUT_SECONDS = 120
 
+_WALLET_INSTALL_HINT = (
+    "Install the wallet library:\n"
+    "  [bold]pip install bittensor-wallet[/bold]\n"
+    "  [bold]pip install \"nepher-cli[bittensor]\"[/bold]"
+)
+
+_SCALECODEC_CONFLICT_HINT = (
+    "[red]btcli cannot start[/red] — [bold]scalecodec[/bold] (py-scale-codec) and "
+    "[bold]cyscale[/bold] are both installed and share the same Python namespace.\n\n"
+    "This is a known Bittensor CLI conflict. Fix it in this venv:\n\n"
+    "  [bold]pip uninstall scalecodec cyscale bt-decode -y[/bold]\n"
+    "  [bold]pip install -U cyscale --force-reinstall[/bold]\n\n"
+    "If [bold]btcli --version[/bold] still fails:\n\n"
+    "  [bold]pip uninstall scalecodec cyscale bt-decode bittensor bittensor-cli -y[/bold]\n"
+    "  [bold]pip install -U \"bittensor[cli]\" --force-reinstall[/bold]\n\n"
+    "npcli itself only needs [bold]bittensor-wallet[/bold] to sign. Prefer:\n"
+    "  [bold]pip install bittensor-wallet[/bold]"
+)
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -146,14 +165,97 @@ def _extract_btcli_payload(stdout_text: str, original_message: str) -> dict[str,
     return data
 
 
+def _installed_distribution_names() -> set[str]:
+    try:
+        from importlib.metadata import distributions
+    except ImportError:  # pragma: no cover
+        return set()
+    names: set[str] = set()
+    for dist in distributions():
+        raw = dist.metadata.get("Name") or dist.metadata.get("name") or ""
+        if raw:
+            names.add(raw.lower().replace("_", "-"))
+    return names
+
+
+def has_scalecodec_cyscale_conflict(names: set[str] | None = None) -> bool:
+    """True when both SCALE codec packages occupy the ``scalecodec`` namespace."""
+    installed = names if names is not None else _installed_distribution_names()
+    has_legacy = "scalecodec" in installed or "py-scale-codec" in installed
+    return has_legacy and "cyscale" in installed
+
+
+def _looks_like_scalecodec_conflict(text: str) -> bool:
+    low = text.lower()
+    return "conflict detected" in low and "scalecodec" in low and "cyscale" in low
+
+
+def _signature_to_hex(sig: Any) -> str:
+    if isinstance(sig, (bytes, bytearray)):
+        return bytes(sig).hex()
+    text = str(sig).strip()
+    if text.startswith(("0x", "0X")):
+        return text[2:]
+    return text
+
+
+def _sign_with_bittensor_wallet(wallet_name: str, message: str) -> dict[str, Any] | None:
+    """Sign with ``bittensor_wallet`` (no btcli / ASI import). None if not installed."""
+    try:
+        from bittensor_wallet import Wallet  # type: ignore[import-untyped]
+    except ImportError:
+        return None
+    except RuntimeError as e:
+        if _looks_like_scalecodec_conflict(str(e)):
+            console.print(_SCALECODEC_CONFLICT_HINT)
+            raise SystemExit(1) from e
+        raise
+
+    wallet = Wallet(name=wallet_name)
+    if not wallet.coldkey_file.exists_on_device():
+        console.print(
+            f"[red]Coldkey not found[/red] for wallet [bold]{wallet_name}[/bold]. "
+            "Check the name with [bold]btcli wallet list[/bold]."
+        )
+        raise SystemExit(1)
+
+    console.print("[dim]Enter the coldkey password if prompted.[/dim]")
+    try:
+        keypair = wallet.coldkey
+    except Exception as e:
+        console.print(
+            f"[red]Could not unlock coldkey[/red] for wallet [bold]{wallet_name}[/bold]: {e}"
+        )
+        raise SystemExit(1) from e
+
+    sig_hex = _signature_to_hex(keypair.sign(message.encode("utf-8")))
+    return {
+        "message": message,
+        "address": keypair.ss58_address,
+        "signature": sig_hex,
+    }
+
+
+def sign_coldkey_challenge(wallet_name: str, message: str) -> dict[str, Any]:
+    """Sign a coldkey challenge with bittensor_wallet, falling back to btcli."""
+    signed = _sign_with_bittensor_wallet(wallet_name, message)
+    if signed is not None:
+        return signed
+    return run_btcli_sign(wallet_name, message)
+
+
 def run_btcli_sign(wallet_name: str, message: str) -> dict[str, Any]:
     """Run btcli wallet sign; inherit stdin/stderr so password prompts work."""
     btcli = shutil.which("btcli")
     if not btcli:
         console.print(
-            "[red]btcli not found[/red] — install Bittensor ([code]pip install bittensor[/code]) "
-            "and ensure [bold]btcli[/bold] is on your PATH."
+            "[red]bittensor-wallet not installed[/red] and [bold]btcli[/bold] is not on PATH.\n\n"
+            f"{_WALLET_INSTALL_HINT}"
         )
+        raise SystemExit(1)
+
+    if has_scalecodec_cyscale_conflict():
+        console.print(_SCALECODEC_CONFLICT_HINT)
         raise SystemExit(1)
 
     cmd = [btcli, "wallet", "sign", "--wallet-name", wallet_name, "--message", message, "--json-output"]
@@ -200,7 +302,10 @@ def run_btcli_sign(wallet_name: str, message: str) -> dict[str, Any]:
     t_err.join(timeout=2)
     out = b"".join(stdout_chunks).decode("utf-8", errors="replace")
 
+    err = b"".join(stderr_chunks).decode("utf-8", errors="replace")
     if proc.returncode != 0:
+        if _looks_like_scalecodec_conflict(out + err):
+            console.print(_SCALECODEC_CONFLICT_HINT)
         raise SystemExit(1)
 
     data = _extract_btcli_payload(out, message)
@@ -242,12 +347,8 @@ def register_coldkey(wallet: str, api_key: str, base_url: str) -> int:
         return 1
 
     console.print(f"Signing with wallet [bold]{wallet}[/bold]...")
-    console.print(
-        "[dim]Passing through btcli output and prompts below. "
-        "Respond directly in this terminal when btcli asks for input.[/dim]"
-    )
     try:
-        signed = run_btcli_sign(wallet, msg)
+        signed = sign_coldkey_challenge(wallet, msg)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted — coldkey registration was not completed.[/yellow]")
         return 130
@@ -518,7 +619,7 @@ def api_keys_revoke(key_id: str, api_key: str | None) -> None:
 def cmd_register_coldkey(wallet: str, api_key: str | None) -> None:
     """Bind or replace the Bittensor coldkey on your Nepher account.
 
-    Requires btcli to be installed and on your PATH. Run the same command
+    Requires bittensor-wallet (or btcli on PATH). Run the same command
     with a different --wallet to replace an existing coldkey.
     """
     resolved_key = api_key or get_stored_api_key()

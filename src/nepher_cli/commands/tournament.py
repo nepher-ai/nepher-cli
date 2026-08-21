@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from nepher_cli.commands.highlight import highlight as highlight_group
 from nepher_cli.config import TOURNAMENT_BACKEND
 from nepher_cli.core.credentials import get_auth_headers, get_stored_api_key
 from nepher_cli.core.http import parse_error_body
@@ -314,6 +315,9 @@ def tournament() -> None:
     """Browse tournaments, check leaderboards, validate agents, and submit to Subnet 49."""
 
 
+tournament.add_command(highlight_group)
+
+
 @tournament.command("list")
 @click.option("--active-only", is_flag=True, help="Show only active tournaments.")
 @click.option("--limit", type=int, default=50, show_default=True, help="Maximum tournaments to return.")
@@ -524,8 +528,8 @@ def tournament_submit(
     Your Nepher account is identified by the API key (--api-key, NEPHER_API_KEY,
     or credentials from npcli account login). The wallet hotkey signs the archive.
 
-    Requires [bold]bittensor[/bold] for wallet signing:
-      pip install bittensor
+    Requires [bold]bittensor-wallet[/bold] for wallet signing:
+      pip install bittensor-wallet
     """
     resolved_key = _resolve_api_key(api_key)
     resolved_url = api_url or TOURNAMENT_BACKEND
