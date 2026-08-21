@@ -530,6 +530,7 @@ def tournament_submit(
 
     Requires [bold]bittensor-wallet[/bold] for wallet signing:
       pip install bittensor-wallet
+      # or: pip install "nepher-cli[bittensor]"
     """
     resolved_key = _resolve_api_key(api_key)
     resolved_url = api_url or TOURNAMENT_BACKEND

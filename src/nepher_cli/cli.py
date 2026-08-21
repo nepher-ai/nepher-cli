@@ -15,7 +15,7 @@ from nepher_cli.commands.tournament import tournament
 @click.group(
     context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 100},
 )
-@click.version_option(version=__version__, prog_name="npcli")
+@click.version_option(version=__version__, package_name="nepher-cli", prog_name="npcli")
 def main() -> None:
     """npcli — the unified Nepher command-line interface.
 
@@ -38,6 +38,11 @@ def main() -> None:
       npcli hackathon list
       npcli envhub list
       npcli tournament list
+
+    \b
+    Tournament submit requires bittensor-wallet for wallet signing:
+      pip install bittensor-wallet
+      # or: pip install "nepher-cli[bittensor]"
 
     Run any sub-command with --help for details and examples.
 
