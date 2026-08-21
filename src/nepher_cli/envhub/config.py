@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "api_url": "https://envhub-api.nepher.ai",
+    "api_url": "https://api.nepher.ai/envhub",
     "api_key": None,
     "cache_dir": "~/.nepher/cache",
     "default_category": None,
@@ -58,8 +58,12 @@ def load_config_file() -> dict[str, Any]:
 
 def _apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
     merged = dict(config)
-    if os.getenv("ENVHUB_API_URL"):
+    if os.getenv("NEPHER_ENVHUB_API_URL"):
+        merged["api_url"] = os.getenv("NEPHER_ENVHUB_API_URL")
+    elif os.getenv("ENVHUB_API_URL"):
         merged["api_url"] = os.getenv("ENVHUB_API_URL")
+    elif os.getenv("NEPHER_API_URL"):
+        merged["api_url"] = f"{os.getenv('NEPHER_API_URL').rstrip('/')}/envhub"
     if os.getenv("NEPHER_API_KEY"):
         merged["api_key"] = os.getenv("NEPHER_API_KEY")
     if os.getenv("NEPHER_CACHE_DIR"):

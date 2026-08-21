@@ -40,7 +40,7 @@ npcli whoami
 npcli logout
 ```
 
-Get your API key at [account.nepher.ai](https://account.nepher.ai) → Account → API Keys.  
+Get your API key at [nepher.ai/account](https://nepher.ai/account) → Account → API Keys.  
 For CI/CD, set `NEPHER_API_KEY=nepher_xxxxxxxx` instead of logging in.
 
 ### Tournaments

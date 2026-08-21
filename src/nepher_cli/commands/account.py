@@ -1,6 +1,6 @@
 """account command group — login, API keys, and coldkey registration.
 
-All commands talk to the account backend (account-api.nepher.ai).
+All commands talk to the account backend (api.nepher.ai/account).
 """
 
 from __future__ import annotations

@@ -41,7 +41,7 @@ def main() -> None:
 
     Run any sub-command with --help for details and examples.
 
-    API keys are created at https://account.nepher.ai (Account > API Keys).
+    API keys are created at https://nepher.ai/account (Account > API Keys).
     """
 
 
