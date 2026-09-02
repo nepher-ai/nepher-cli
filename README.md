@@ -120,7 +120,7 @@ Full options:
 
 ```bash
 npcli account api-keys list
-npcli account api-keys create --name "CI key" --platform hackertone
+npcli account api-keys create --name "CI key" --platform hackathon
 npcli account api-keys revoke <key_id>
 ```
 

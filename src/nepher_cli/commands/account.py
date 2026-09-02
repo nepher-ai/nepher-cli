@@ -554,7 +554,7 @@ def api_keys_list(api_key: str | None) -> None:
 @click.option("--name", required=True, help="Human-readable label for the key.")
 @click.option(
     "--platform", "platforms", multiple=True,
-    help="Platform access to grant (envhub, tournament, hackertone, simstore). Repeat for multiple. Omit for all.",
+    help="Platform access to grant (envhub, tournament, hackathon, simstore). Repeat for multiple. Omit for all.",
 )
 @click.option("--expires-at", default=None, help="Expiry in ISO 8601 (e.g. 2027-01-01T00:00:00Z).")
 @click.option("--api-key", "api_key", default=None, envvar="NEPHER_API_KEY")
