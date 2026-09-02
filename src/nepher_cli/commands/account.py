@@ -512,7 +512,13 @@ def api_keys() -> None:
 
 
 @api_keys.command("list")
-@click.option("--api-key", "api_key", default=None, envvar="NEPHER_API_KEY")
+@click.option(
+    "--api-key",
+    "api_key",
+    default=None,
+    envvar="NEPHER_API_KEY",
+    help="Do not use for this command. Run 'npcli account login' first (list needs a JWT session).",
+)
 def api_keys_list(api_key: str | None) -> None:
     """List your API keys."""
     headers = _require_auth(api_key)
@@ -557,9 +563,15 @@ def api_keys_list(api_key: str | None) -> None:
     help="Platform access to grant (envhub, tournament, hackathon, simstore). Repeat for multiple. Omit for all.",
 )
 @click.option("--expires-at", default=None, help="Expiry in ISO 8601 (e.g. 2027-01-01T00:00:00Z).")
-@click.option("--api-key", "api_key", default=None, envvar="NEPHER_API_KEY")
+@click.option(
+    "--api-key",
+    "api_key",
+    default=None,
+    envvar="NEPHER_API_KEY",
+    help="Do not use for this command. Run 'npcli account login' first (create needs a JWT session).",
+)
 def api_keys_create(name: str, platforms: tuple[str, ...], expires_at: str | None, api_key: str | None) -> None:
-    """Create a new API key."""
+    """Create a new API key (requires prior 'npcli account login'; JWT session)."""
     headers = _require_auth(api_key)
     payload: dict[str, Any] = {"name": name}
     if platforms:
@@ -588,7 +600,13 @@ def api_keys_create(name: str, platforms: tuple[str, ...], expires_at: str | Non
 
 @api_keys.command("revoke")
 @click.argument("key_id")
-@click.option("--api-key", "api_key", default=None, envvar="NEPHER_API_KEY")
+@click.option(
+    "--api-key",
+    "api_key",
+    default=None,
+    envvar="NEPHER_API_KEY",
+    help="Do not use for this command. Run 'npcli account login' first (revoke needs a JWT session).",
+)
 def api_keys_revoke(key_id: str, api_key: str | None) -> None:
     """Revoke (delete) an API key by its ID."""
     headers = _require_auth(api_key)

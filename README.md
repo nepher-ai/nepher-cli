@@ -118,7 +118,11 @@ Full options:
 
 ### API Keys
 
+`list` / `create` / `revoke` need a **JWT session** from `npcli account login`.  
+Do **not** pass `--api-key` on these commands (that flag sends `X-API-Key`, which the account API rejects for key management).
+
 ```bash
+npcli account login --api-key nepher_...
 npcli account api-keys list
 npcli account api-keys create --name "CI key" --platform hackathon
 npcli account api-keys revoke <key_id>
