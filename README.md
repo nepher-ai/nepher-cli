@@ -40,7 +40,7 @@ npcli whoami
 npcli logout
 ```
 
-Get your API key at [account.nepher.ai](https://account.nepher.ai) → Account → API Keys.  
+Get your API key at [nepher.ai/account](https://nepher.ai/account) → Account → API Keys.  
 For CI/CD, set `NEPHER_API_KEY=nepher_xxxxxxxx` instead of logging in.
 
 ### Tournaments
@@ -118,9 +118,13 @@ Full options:
 
 ### API Keys
 
+`list` / `create` / `revoke` need a **JWT session** from `npcli account login`.  
+Do **not** pass `--api-key` on these commands (that flag sends `X-API-Key`, which the account API rejects for key management).
+
 ```bash
+npcli account login --api-key nepher_...
 npcli account api-keys list
-npcli account api-keys create --name "CI key" --platform hackertone
+npcli account api-keys create --name "CI key" --platform hackathon
 npcli account api-keys revoke <key_id>
 ```
 
