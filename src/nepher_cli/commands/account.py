@@ -396,7 +396,7 @@ def register_coldkey(wallet: str, api_key: str, base_url: str) -> int:
 
 @click.group("account")
 def account() -> None:
-    """Manage your Nepher account — login, API keys, and coldkey registration."""
+    """Manage your Nepher account — login, API keys, coldkey, and platform balance."""
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────
@@ -625,6 +625,78 @@ def api_keys_revoke(key_id: str, api_key: str | None) -> None:
 
 
 # ── Coldkey ──────────────────────────────────────────────────────────────────
+
+
+@account.command("balance")
+@click.option(
+    "--api-key", "--apikey", "api_key",
+    default=None, envvar="NEPHER_API_KEY", metavar="KEY",
+    help="Nepher API key (nepher_...). Falls back to stored credentials.",
+)
+def cmd_balance(api_key: str | None) -> None:
+    """Show platform balance used for submission fees and unlocks."""
+    headers = _require_auth(api_key)
+    url = f"{ACCOUNT_BACKEND.rstrip('/')}/api/v1/billing/balance"
+    try:
+        r = httpx.get(url, headers=headers, timeout=30.0)
+    except httpx.RequestError as e:
+        console.print(f"[red]Network error[/red]: {e}")
+        raise SystemExit(1) from e
+    if r.status_code >= 400:
+        console.print(f"[red]{parse_error_body(r.text) or r.text.strip() or f'HTTP {r.status_code}'}[/red]")
+        raise SystemExit(1)
+    body = r.json()
+    console.print(f"  Balance : [bold]{body.get('balance_tao', 0)} TAO[/bold]")
+    if body.get("coldkey"):
+        console.print(f"  Coldkey : {body['coldkey']}")
+    else:
+        console.print("  Coldkey : [yellow]not registered[/yellow] — run npcli account register-coldkey")
+    if body.get("network"):
+        console.print(f"  Network : {body['network']}")
+    console.print(
+        "  Deposit : "
+        + ("available via Account → Billing on the website" if body.get("deposit_available") else "unavailable")
+    )
+
+
+@account.command("ledger")
+@click.option("--limit", default=20, show_default=True, help="Number of ledger rows.")
+@click.option(
+    "--api-key", "--apikey", "api_key",
+    default=None, envvar="NEPHER_API_KEY", metavar="KEY",
+    help="Nepher API key (nepher_...). Falls back to stored credentials.",
+)
+def cmd_ledger(limit: int, api_key: str | None) -> None:
+    """Show recent platform billing history (deposits, fees, unlocks)."""
+    headers = _require_auth(api_key)
+    url = f"{ACCOUNT_BACKEND.rstrip('/')}/api/v1/billing/ledger"
+    try:
+        r = httpx.get(url, headers=headers, params={"limit": limit}, timeout=30.0)
+    except httpx.RequestError as e:
+        console.print(f"[red]Network error[/red]: {e}")
+        raise SystemExit(1) from e
+    if r.status_code >= 400:
+        console.print(f"[red]{parse_error_body(r.text) or r.text.strip() or f'HTTP {r.status_code}'}[/red]")
+        raise SystemExit(1)
+    items = (r.json() or {}).get("items") or []
+    if not items:
+        console.print("[dim]No billing activity yet.[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("When")
+    table.add_column("Type")
+    table.add_column("Amount (TAO)", justify="right")
+    table.add_column("Balance after", justify="right")
+    table.add_column("Details")
+    for row in items:
+        table.add_row(
+            str(row.get("created_at") or "—"),
+            str(row.get("entry_type") or "—"),
+            f"{float(row.get('amount_tao') or 0):.6f}",
+            f"{float(row.get('balance_after_tao') or 0):.6f}",
+            str(row.get("description") or "—"),
+        )
+    console.print(table)
 
 
 @account.command("register-coldkey")

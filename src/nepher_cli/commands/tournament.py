@@ -582,16 +582,43 @@ def tournament_submit(
                 resolved_tournament_id = token_data["tournament_id"]
                 upload_token = token_data["upload_token"]
 
+                fee = token_data.get("submission_fee_tao")
+                if fee is not None:
+                    console.print(
+                        f"Submission fee: [bold]{fee} TAO[/bold] "
+                        f"(debited from platform balance on upload)"
+                    )
+                    fee_min = token_data.get("submission_fee_min_tao")
+                    fee_max = token_data.get("submission_fee_max_tao")
+                    fee_dur = token_data.get("submission_fee_duration_hours")
+                    if fee_min is not None and fee_max is not None:
+                        console.print(
+                            f"  [dim]Fee curve: {fee_max} → {fee_min} TAO"
+                            + (f" over {fee_dur}h" if fee_dur is not None else "")
+                            + "[/dim]"
+                        )
+
                 console.print("Uploading agent...")
-                agent_id = await tournament_api.upload_agent(
-                    api_key=resolved_key,
-                    api_url=resolved_url,
-                    tournament_id=resolved_tournament_id,
-                    upload_token=upload_token,
-                    miner_hotkey=miner_hotkey,
-                    content_hash=content_hash,
-                    file_path=archive,
-                )
+                try:
+                    upload_result = await tournament_api.upload_agent(
+                        api_key=resolved_key,
+                        api_url=resolved_url,
+                        tournament_id=resolved_tournament_id,
+                        upload_token=upload_token,
+                        miner_hotkey=miner_hotkey,
+                        content_hash=content_hash,
+                        file_path=archive,
+                    )
+                except tournament_api.UploadChargeError as e:
+                    console.print(f"[red]Submission fee failed:[/red] {e}")
+                    console.print(
+                        "  Check balance with [bold]npcli account balance[/bold], "
+                        "then deposit TAO on Account → Billing."
+                    )
+                    return 1
+
+                agent_id = upload_result["agent_id"]
+                charged = upload_result.get("submission_fee_tao")
 
             t_title = _tournament_title(token_data)
             t_task = _tournament_task_name(token_data)
@@ -600,6 +627,8 @@ def tournament_submit(
             console.print("[green]Agent submitted successfully.[/green]")
             console.print(f"  Agent ID     : [bold]{agent_id}[/bold]")
             console.print(f"  Tournament ID: [bold]{resolved_tournament_id}[/bold]")
+            if charged is not None:
+                console.print(f"  Fee charged  : [bold]{charged} TAO[/bold]")
             if t_title and t_title != "—":
                 console.print(f"  Title        : {t_title}")
             if t_task and t_task != "—":

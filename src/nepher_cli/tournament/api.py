@@ -21,6 +21,14 @@ def _json_headers(api_key: str) -> dict[str, str]:
     }
 
 
+class UploadChargeError(RuntimeError):
+    """Raised when upload fails due to payment / platform balance."""
+
+    def __init__(self, message: str, *, status_code: int = 402):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def _raise_for_error(response: httpx.Response) -> None:
     if response.status_code < 400:
         return
@@ -29,6 +37,8 @@ def _raise_for_error(response: httpx.Response) -> None:
         or response.text.strip()
         or f"HTTP {response.status_code}"
     )
+    if response.status_code == 402:
+        raise UploadChargeError(msg, status_code=402)
     raise RuntimeError(msg)
 
 
@@ -76,8 +86,11 @@ async def upload_agent(
     miner_hotkey: str,
     content_hash: str,
     file_path: Path,
-) -> str:
-    """POST /api/v1/agents/upload/{tournament_id} (multipart) → agent_id string."""
+) -> dict[str, Any]:
+    """POST /api/v1/agents/upload/{tournament_id} (multipart) → response dict.
+
+    Returns at least ``agent_id``; may include ``submission_fee_tao``.
+    """
     url = f"{api_url.rstrip('/')}/api/v1/agents/upload/{tournament_id}"
     headers = {
         "X-API-Key": api_key,
@@ -97,4 +110,8 @@ async def upload_agent(
     agent_id = data.get("id") or data.get("agent_id")
     if not agent_id:
         raise RuntimeError(f"No agent ID in upload response: {data}")
-    return str(agent_id)
+    return {
+        "agent_id": str(agent_id),
+        "submission_fee_tao": data.get("submission_fee_tao"),
+        "raw": data,
+    }
