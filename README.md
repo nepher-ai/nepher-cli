@@ -79,8 +79,30 @@ Full options for `submit`:
 --api-key <key>             Nepher API key (falls back to stored credentials)
 --tournament-id <id>        Target tournament ID (required when multiple are active)
 --api-url <url>             Override tournament API URL
+--hf-repo <owner/name>      Private Hugging Face repo holding the weights (huggingface tournaments)
+--hf-revision <sha>         Full 40-character commit SHA of the sealed repo state
+--hf-token <token>          Fine-grained, read-only token for that one repo (or NEPHER_HF_READ_TOKEN)
 -v / --verbose              Verbose output
 ```
+
+#### Tournaments that keep weights on Hugging Face
+
+Large-model tournaments (VLA, WAM, LWM) do not accept weight uploads. Push `weights/` to a **private
+model repo in your own user namespace** and create a fine-grained token that has read access to that
+one repo only. `npcli` reads the tournament's submission mode and uploads only the code archive plus a
+signed seal of the repo, commit, and weight hashes. The generic `HF_TOKEN` variable is never read, and
+`npcli` asks Hugging Face about the token before sending it anywhere.
+
+```bash
+npcli tournament proof  --path ./my-agent --tournament-id <id>      # writes nepher-proof.json
+# copy nepher-proof.json to the repo root, push, and note the commit SHA
+npcli tournament check  --path ./my-agent --submission-mode huggingface
+npcli tournament submit --path ./my-agent --tournament-id <id> \
+    --hf-repo alice/my-weights --hf-revision <40-hex commit> --hf-token <read-only token>
+```
+
+Keep the repo private and do not push changed weights after submitting. The same weights cannot be
+submitted twice. The full rules are in `docs/huggingface-weight-custody.md` of the `nepher-subnet` repository.
 
 ### EnvHub
 

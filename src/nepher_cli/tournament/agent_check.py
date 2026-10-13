@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from nepher_cli.tournament.custody import MODE_HUGGINGFACE, MODE_INLINE, check_huggingface_layout
+
 # Required items: relative path → "file" or "directory"
 _REQUIRED: dict[str, str] = {
     "best_policy": "directory",
@@ -20,8 +22,12 @@ _RECOMMENDED: dict[str, str] = {
 
 def check_agent_structure(
     agent_path: Path,
+    submission_mode: str = MODE_INLINE,
 ) -> tuple[bool, list[str], list[str]]:
     """Check whether *agent_path* meets the expected agent layout.
+
+    ``submission_mode="huggingface"`` checks a brain submission whose weights are
+    sealed to a private Hugging Face repo instead of the checkpoint layout.
 
     Returns:
         (is_valid, errors, warnings)
@@ -38,6 +44,10 @@ def check_agent_structure(
 
     if not agent_path.is_dir():
         return False, [f"Not a directory: {agent_path}"], warnings
+
+    if submission_mode == MODE_HUGGINGFACE:
+        errors, _ = check_huggingface_layout(agent_path)
+        return len(errors) == 0, errors, warnings
 
     for rel_path, item_type in _REQUIRED.items():
         full_path = agent_path / rel_path

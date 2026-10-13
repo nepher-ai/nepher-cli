@@ -19,11 +19,16 @@ def _is_excluded(path_part: str) -> bool:
     return p.name in _EXCLUDED_NAMES or p.suffix in _EXCLUDED_SUFFIXES
 
 
-def zip_directory(source_dir: Path, output_path: Path) -> None:
+def zip_directory(
+    source_dir: Path,
+    output_path: Path,
+    exclude_top_level: frozenset[str] = frozenset(),
+) -> None:
     """Create a ZIP archive of *source_dir* at *output_path*.
 
     Files are added in sorted order for reproducibility. Common
-    build artefacts and VCS directories are excluded automatically.
+    build artefacts and VCS directories are excluded automatically, as are
+    any top-level entries named in *exclude_top_level* (for example ``weights``).
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -31,6 +36,8 @@ def zip_directory(source_dir: Path, output_path: Path) -> None:
             if not file_path.is_file():
                 continue
             rel = file_path.relative_to(source_dir)
+            if rel.parts[0] in exclude_top_level:
+                continue
             if any(_is_excluded(part) for part in rel.parts):
                 continue
             zf.write(file_path, rel)

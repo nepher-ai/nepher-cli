@@ -52,10 +52,12 @@ async def request_upload_token(
     signature: str,
     file_size: int,
     tournament_id: str | None = None,
+    seal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """POST /api/v1/agents/upload/verify → parsed JSON token dict.
 
     The returned dict contains at least ``upload_token`` and ``tournament_id``.
+    *seal* is sent only for Hugging Face custody tournaments.
     """
     body: dict[str, Any] = {
         "miner_hotkey": miner_hotkey,
@@ -66,6 +68,8 @@ async def request_upload_token(
     }
     if tournament_id is not None:
         body["tournament_id"] = tournament_id
+    if seal is not None:
+        body["seal"] = seal
 
     url = f"{api_url.rstrip('/')}/api/v1/agents/upload/verify"
     async with httpx.AsyncClient(
@@ -86,6 +90,7 @@ async def upload_agent(
     miner_hotkey: str,
     content_hash: str,
     file_path: Path,
+    weights_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """POST /api/v1/agents/upload/{tournament_id} (multipart) → response dict.
 
@@ -97,12 +102,15 @@ async def upload_agent(
         "Accept": "application/json",
         "X-Upload-Token": upload_token,
     }
+    form = {"miner_hotkey": miner_hotkey, "content_hash": content_hash}
+    if weights_fingerprint is not None:
+        form["weights_fingerprint"] = weights_fingerprint
     async with httpx.AsyncClient(timeout=httpx.Timeout(_UPLOAD_TIMEOUT)) as client:
         with open(file_path, "rb") as fh:
             response = await client.post(
                 url,
                 files={"file": (file_path.name, fh, "application/zip")},
-                data={"miner_hotkey": miner_hotkey, "content_hash": content_hash},
+                data=form,
                 headers=headers,
             )
     _raise_for_error(response)
@@ -114,4 +122,41 @@ async def upload_agent(
         "agent_id": str(agent_id),
         "submission_fee_tao": data.get("submission_fee_tao"),
         "raw": data,
+    }
+
+
+async def fetch_submission_policy(
+    *,
+    api_key: str,
+    api_url: str,
+    tournament_id: str | None = None,
+) -> dict[str, Any]:
+    """Return ``tournament_id``, ``submission_mode`` and ``base_weight_sha256``.
+
+    Without *tournament_id* the single active tournament is used, matching the
+    backend's own auto-selection. ``submission_mode`` is ``inline`` when the
+    backend does not send it.
+    """
+    base = api_url.rstrip("/")
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_json_headers(api_key)) as client:
+        if tournament_id is not None:
+            response = await client.get(f"{base}/api/v1/tournaments/{tournament_id}")
+            _raise_for_error(response)
+            data = response.json()
+        else:
+            response = await client.get(
+                f"{base}/api/v1/tournaments/active/list", params={"subnet": "true"}
+            )
+            _raise_for_error(response)
+            payload = response.json()
+            items = payload.get("tournaments", []) if isinstance(payload, dict) else payload
+            if len(items) != 1:
+                raise RuntimeError(
+                    f"{len(items)} active tournaments; pass --tournament-id to choose one"
+                )
+            data = items[0]
+    return {
+        "tournament_id": str(data.get("id") or tournament_id or ""),
+        "submission_mode": data.get("submission_mode") or "inline",
+        "base_weight_sha256": [str(d).lower() for d in data.get("base_weight_sha256") or []],
     }

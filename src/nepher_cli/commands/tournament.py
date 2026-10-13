@@ -23,8 +23,23 @@ from nepher_cli.core.credentials import get_auth_headers, get_stored_api_key
 from nepher_cli.core.http import parse_error_body
 from nepher_cli.tournament.agent_check import check_agent_structure
 from nepher_cli.tournament import api as tournament_api
+from nepher_cli.tournament.custody import (
+    MODE_HUGGINGFACE,
+    MODE_INLINE,
+    HuggingFaceSubmission,
+    check_huggingface_layout,
+    is_valid_repo_id,
+    is_valid_revision,
+    verify_hf_token,
+    write_proof,
+)
 from nepher_cli.tournament.packer import compute_checksum, get_file_size, zip_directory
-from nepher_cli.tournament.wallet import prepare_submission_credentials
+from nepher_cli.tournament.wallet import (
+    get_hotkey,
+    load_wallet,
+    prepare_submission_credentials,
+    sign_message,
+)
 
 console = Console(stderr=True)
 
@@ -475,18 +490,27 @@ def tournament_leaderboard(tournament_id: str, limit: int, output_json: bool) ->
 @tournament.command("check")
 @click.option("--path", "agent_path", type=click.Path(), required=True, help="Path to agent directory.")
 @click.option("--verbose", "-v", is_flag=True, help="Show warnings for missing recommended files.")
-def tournament_check(agent_path: str, verbose: bool) -> None:
+@click.option(
+    "--submission-mode",
+    type=click.Choice([MODE_INLINE, MODE_HUGGINGFACE]),
+    default=MODE_INLINE,
+    show_default=True,
+    help="huggingface checks a brain submission whose weights live in a private Hugging Face repo.",
+)
+def tournament_check(agent_path: str, verbose: bool, submission_mode: str) -> None:
     """Check local agent directory structure without submitting.
 
     Verifies required files (best_policy/best_policy.pt, source/) and warns
     about missing recommended files (scripts/rsl_rl/play.py, etc.).
+    With --submission-mode huggingface it checks agent.yaml, brain/, train/,
+    the local weight hashes, and nepher-proof.json instead.
 
     No extra dependencies required — runs entirely offline.
     """
     path = Path(agent_path)
     console.print(f"Validating agent at [bold]{path}[/bold]...")
 
-    is_valid, errors, warnings = check_agent_structure(path)
+    is_valid, errors, warnings = check_agent_structure(path, submission_mode)
 
     if warnings and verbose:
         for w in warnings:
@@ -502,6 +526,119 @@ def tournament_check(agent_path: str, verbose: bool) -> None:
         raise SystemExit(1)
 
 
+@tournament.command("proof")
+@click.option("--path", "agent_path", type=click.Path(), required=True, help="Path to agent directory.")
+@click.option("--tournament-id", required=True, help="Tournament the weights are submitted to.")
+@click.option("--wallet-name", default="miner", show_default=True, help="Bittensor wallet name.")
+@click.option("--wallet-hotkey", default="default", show_default=True, help="Bittensor wallet hotkey.")
+def tournament_proof(agent_path: str, tournament_id: str, wallet_name: str, wallet_hotkey: str) -> None:
+    """Write nepher-proof.json for a Hugging Face weight submission.
+
+    Copy the file to the root of your private Hugging Face repo and push it before
+    you note the commit SHA that you submit.
+    """
+    path = Path(agent_path)
+    if not path.is_dir():
+        console.print(f"[red]Not a directory: {path}[/red]")
+        raise SystemExit(1)
+    hotkey = get_hotkey(load_wallet(wallet_name, wallet_hotkey))
+    target = write_proof(path, tournament_id, hotkey)
+    console.print(f"[green]Wrote {target}[/green]")
+    console.print("Copy it to the root of your Hugging Face repo and push, then submit that commit.")
+
+
+def _lookup_submission_policy(
+    api_key: str,
+    api_url: str,
+    tournament_id: str | None,
+    *,
+    required: bool,
+) -> dict[str, Any] | None:
+    """Fetch the tournament's submission mode.
+
+    Checkpoint directories carry on with the inline path when the lookup fails.
+    Brain directories and ``--hf-*`` options stop, because the right archive depends on the mode.
+    """
+    try:
+        return asyncio.run(
+            tournament_api.fetch_submission_policy(
+                api_key=api_key, api_url=api_url, tournament_id=tournament_id
+            )
+        )
+    except Exception as e:
+        if required:
+            console.print(
+                f"[red]Could not read the tournament's submission mode:[/red] {e}\n"
+                "  Pass [bold]--tournament-id[/bold] and check your connection."
+            )
+            raise SystemExit(1) from e
+        return None
+
+
+def _prepare_huggingface_submission(
+    *,
+    path: Path,
+    policy: dict[str, Any],
+    wallet_name: str,
+    wallet_hotkey: str,
+    hf_repo: str | None,
+    hf_revision: str | None,
+    hf_token: str | None,
+):
+    """Run every local check for a sealed submission. Exits on the first problem."""
+    tournament_id = policy["tournament_id"]
+    problems: list[str] = []
+    if not tournament_id:
+        problems.append("the backend did not return a tournament id")
+    if not hf_repo or not is_valid_repo_id(hf_repo):
+        problems.append("--hf-repo must look like owner/name")
+    if not hf_revision or not is_valid_revision(hf_revision):
+        problems.append("--hf-revision must be the full 40-character commit SHA")
+    if problems:
+        console.print("[red]This tournament keeps weights on Hugging Face:[/red]")
+        for problem in problems:
+            console.print(f"  • {problem}")
+        raise SystemExit(1)
+    assert hf_repo is not None and hf_revision is not None
+
+    wallet = load_wallet(wallet_name, wallet_hotkey)
+    miner_hotkey = get_hotkey(wallet)
+
+    console.print("Hashing weight files...")
+    errors, weights = check_huggingface_layout(
+        path,
+        base_digests=policy["base_weight_sha256"],
+        tournament_id=tournament_id,
+        miner_hotkey=miner_hotkey,
+    )
+    if errors:
+        console.print("[red]Agent validation failed:[/red]")
+        for err in errors:
+            console.print(f"  • {err}")
+        raise SystemExit(1)
+    console.print(f"[green]{len(weights)} weight file(s) hashed.[/green]")
+
+    token = hf_token or click.prompt("Hugging Face read-only token", hide_input=True, err=True)
+    console.print("Checking the token with Hugging Face...")
+    token_errors = verify_hf_token(token, hf_repo)
+    if token_errors:
+        console.print("[red]The Hugging Face token cannot be used:[/red]")
+        for err in token_errors:
+            console.print(f"  • {err}")
+        raise SystemExit(1)
+
+    submission = HuggingFaceSubmission(
+        tournament_id=tournament_id,
+        miner_hotkey=miner_hotkey,
+        hf_repo=hf_repo,
+        hf_revision=hf_revision,
+        weights=weights,
+        base_digests=frozenset(policy["base_weight_sha256"]),
+        hf_token=token,
+    )
+    return submission, lambda message: sign_message(wallet, message)
+
+
 @tournament.command("submit")
 @click.option("--path", "agent_path", type=click.Path(), required=True, help="Path to agent directory.")
 @click.option("--wallet-name", default="miner", show_default=True, help="Bittensor wallet name.")
@@ -513,6 +650,15 @@ def tournament_check(agent_path: str, verbose: bool) -> None:
 )
 @click.option("--api-url", default=None, help=f"Tournament API URL (default: {TOURNAMENT_BACKEND}).")
 @click.option("--tournament-id", default=None, help="Target tournament ID (required when multiple are active).")
+@click.option("--hf-repo", default=None, metavar="OWNER/NAME",
+              help="Private Hugging Face repo holding the weights (huggingface tournaments).")
+@click.option("--hf-revision", default=None, metavar="SHA",
+              help="Full 40-character commit SHA of the sealed repo state.")
+@click.option(
+    "--hf-token", default=None, envvar="NEPHER_HF_READ_TOKEN", metavar="TOKEN",
+    help="Fine-grained Hugging Face token with read-only access to that one repo. "
+         "The generic HF_TOKEN variable is never read.",
+)
 @click.option("--verbose", "-v", is_flag=True)
 def tournament_submit(
     agent_path: str,
@@ -521,12 +667,19 @@ def tournament_submit(
     api_key: str | None,
     api_url: str | None,
     tournament_id: str | None,
+    hf_repo: str | None,
+    hf_revision: str | None,
+    hf_token: str | None,
     verbose: bool,
 ) -> None:
     """Submit a trained agent to Bittensor Subnet 49 tournaments.
 
     Your Nepher account is identified by the API key (--api-key, NEPHER_API_KEY,
     or credentials from npcli account login). The wallet hotkey signs the archive.
+
+    In huggingface tournaments the weights stay in your private Hugging Face repo.
+    Only the code archive is uploaded, with a signed seal of the repo, commit, and
+    weight hashes. See nepher-subnet/docs/huggingface-weight-custody.md.
 
     Requires [bold]bittensor-wallet[/bold] for wallet signing:
       pip install bittensor-wallet
@@ -536,17 +689,49 @@ def tournament_submit(
     resolved_url = api_url or TOURNAMENT_BACKEND
     path = Path(agent_path)
 
-    console.print("Checking agent structure...")
-    is_valid, errors, warnings = check_agent_structure(path)
-    if warnings and verbose:
-        for w in warnings:
-            console.print(f"  [yellow]warning:[/yellow] {w}")
-    if not is_valid:
-        console.print("[red]Agent validation failed:[/red]")
-        for err in errors:
-            console.print(f"  • {err}")
+    hf_options = any(value is not None for value in (hf_repo, hf_revision))
+    policy = _lookup_submission_policy(
+        resolved_key,
+        resolved_url,
+        tournament_id,
+        required=(path / "agent.yaml").is_file() or hf_options,
+    )
+    mode = policy["submission_mode"] if policy else MODE_INLINE
+    if mode not in (MODE_INLINE, MODE_HUGGINGFACE):
+        console.print(f"[red]Unsupported submission mode '{mode}'. Upgrade npcli.[/red]")
         raise SystemExit(1)
-    console.print("[green]Agent structure valid.[/green]")
+
+    huggingface: HuggingFaceSubmission | None = None
+    sign = None
+    if mode == MODE_HUGGINGFACE:
+        assert policy is not None
+        huggingface, sign = _prepare_huggingface_submission(
+            path=path,
+            policy=policy,
+            wallet_name=wallet_name,
+            wallet_hotkey=wallet_hotkey,
+            hf_repo=hf_repo,
+            hf_revision=hf_revision,
+            hf_token=hf_token,
+        )
+        tournament_id = huggingface.tournament_id
+    else:
+        if hf_options:
+            console.print(
+                "[red]This tournament stores weights inline. Remove --hf-repo and --hf-revision.[/red]"
+            )
+            raise SystemExit(1)
+        console.print("Checking agent structure...")
+        is_valid, errors, warnings = check_agent_structure(path)
+        if warnings and verbose:
+            for w in warnings:
+                console.print(f"  [yellow]warning:[/yellow] {w}")
+        if not is_valid:
+            console.print("[red]Agent validation failed:[/red]")
+            for err in errors:
+                console.print(f"  • {err}")
+            raise SystemExit(1)
+        console.print("[green]Agent structure valid.[/green]")
 
     async def _run() -> int:
         try:
@@ -554,7 +739,11 @@ def tournament_submit(
                 archive = Path(tmpdir) / "agent.zip"
 
                 console.print("Creating submission archive...")
-                zip_directory(path, archive)
+                zip_directory(
+                    path,
+                    archive,
+                    frozenset({"weights"}) if huggingface is not None else frozenset(),
+                )
                 content_hash = compute_checksum(archive)
                 file_size = get_file_size(archive)
                 if verbose:
@@ -568,6 +757,13 @@ def tournament_submit(
                     prepare_submission_credentials(wallet_name, wallet_hotkey, content_hash)
                 )
 
+                seal = None
+                if huggingface is not None:
+                    if miner_hotkey != huggingface.miner_hotkey:
+                        raise RuntimeError("wallet hotkey changed while preparing the seal")
+                    console.print("Sealing weights to the Hugging Face commit...")
+                    seal = huggingface.seal(sign)
+
                 console.print("Requesting upload token...")
                 token_data = await tournament_api.request_upload_token(
                     api_key=resolved_key,
@@ -578,9 +774,12 @@ def tournament_submit(
                     signature=signature,
                     file_size=file_size,
                     tournament_id=tournament_id,
+                    seal=seal,
                 )
                 resolved_tournament_id = token_data["tournament_id"]
                 upload_token = token_data["upload_token"]
+                if huggingface is not None and resolved_tournament_id != huggingface.tournament_id:
+                    raise RuntimeError("the backend selected a different tournament than the seal")
 
                 fee = token_data.get("submission_fee_tao")
                 if fee is not None:
@@ -608,6 +807,7 @@ def tournament_submit(
                         miner_hotkey=miner_hotkey,
                         content_hash=content_hash,
                         file_path=archive,
+                        weights_fingerprint=huggingface.fingerprint if huggingface else None,
                     )
                 except tournament_api.UploadChargeError as e:
                     console.print(f"[red]Submission fee failed:[/red] {e}")
