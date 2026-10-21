@@ -31,9 +31,14 @@ def test_list_values_matches_nepher_package() -> None:
         from nepher.config import get_config
     except ImportError:
         return
+    from nepher_cli.envhub.config import LEGACY_API_URLS
+
     cfg = get_config()
     values = list_values()
-    assert values["api_url"] == cfg.get("api_url")
+    expected_url = cfg.get("api_url")
+    if expected_url in LEGACY_API_URLS:
+        expected_url = DEFAULT_CONFIG["api_url"]
+    assert values["api_url"] == expected_url
     assert values["cache_dir"] == cfg.get("cache_dir")
     assert values["default_category"] == cfg.get("default_category")
 

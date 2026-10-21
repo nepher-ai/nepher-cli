@@ -17,16 +17,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 LIST_KEYS = ("api_url", "cache_dir", "default_category")
 
+# Older ``nepher`` releases persisted this default into config.toml; treat it as unset.
+LEGACY_API_URLS = frozenset({"https://envhub-api.nepher.ai", "https://envhub-api.nepher.ai/"})
+
+SECRET_KEYS = ("api_key",)
+
 
 def find_config_file() -> Path | None:
     """Return the active nepher config file path, if any."""
     cwd_config = Path.cwd() / ".nepherrc"
     if cwd_config.exists():
         return cwd_config
-    home_config = Path.home() / ".nepher" / "config.toml"
-    if home_config.exists():
-        return home_config
+    for name in ("config.toml", "config.json"):
+        home_config = Path.home() / ".nepher" / name
+        if home_config.exists():
+            return home_config
     return None
+
+
+def _load_toml(text: str) -> dict[str, Any]:
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore[no-redef]
+    return tomllib.loads(text)
 
 
 def load_config_file() -> dict[str, Any]:
@@ -36,24 +50,23 @@ def load_config_file() -> dict[str, Any]:
         return {}
 
     try:
-        if config_file.suffix == ".toml":
+        text = config_file.read_text(encoding="utf-8")
+        if config_file.suffix == ".json":
+            data = json.loads(text)
+        elif config_file.suffix == ".toml":
+            data = _load_toml(text)
+        else:
             try:
-                import tomllib
-            except ImportError:
-                try:
-                    import tomli as tomllib  # type: ignore[no-redef]
-                except ImportError:
-                    return {}
-            with open(config_file, "rb") as f:
-                data = tomllib.load(f)
-                return data if isinstance(data, dict) else {}
-        if config_file.suffix == ".json" or config_file.name == ".nepherrc":
-            with open(config_file, encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
+                data = _load_toml(text)
+            except Exception:
+                data = json.loads(text)
     except Exception:
         return {}
-    return {}
+    if not isinstance(data, dict):
+        return {}
+    if data.get("api_url") in LEGACY_API_URLS:
+        data.pop("api_url")
+    return data
 
 
 def _apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
@@ -88,9 +101,17 @@ def get_value(key: str, default: Any = None) -> Any:
     try:
         from nepher.config import get_config
 
-        return get_config().get(key, default)
+        value = get_config().get(key, default)
     except ImportError:
         return _fallback_get(key, default)
+    if key == "api_url" and value in LEGACY_API_URLS:
+        return _fallback_get(key, default)
+    return value
+
+
+def get_api_url() -> str:
+    """Effective EnvHub API base URL (env vars > config file > default)."""
+    return str(get_value("api_url") or DEFAULT_CONFIG["api_url"]).rstrip("/")
 
 
 def list_values() -> dict[str, Any]:
@@ -111,6 +132,8 @@ def parse_config_value(value: str) -> Any:
 
 def set_value(key: str, value: Any) -> None:
     """Persist a configuration value."""
+    if key in SECRET_KEYS:
+        raise ValueError("API keys are not stored in config; use 'npcli login' or NEPHER_API_KEY.")
     try:
         from nepher.config import set_config
 

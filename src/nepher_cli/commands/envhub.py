@@ -7,7 +7,9 @@ same operations from inside the unified npcli interface.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import shutil
 import tempfile
 import zipfile
@@ -21,13 +23,27 @@ from rich.console import Console
 from nepher_cli.config import ENVHUB_BACKEND
 from nepher_cli.core.credentials import get_auth_headers, get_stored_api_key
 from nepher_cli.core.http import parse_error_body
+from nepher_cli.envhub.bundle import extract_bundle, iter_bundle_files, safe_env_id
 from nepher_cli.envhub.cache import is_cached_env, list_cached_env_dirs, resolve_cache_dir
 from nepher_cli.envhub.config import (
+    get_api_url as get_envhub_api_url,
+)
+from nepher_cli.envhub.config import (
     get_value as get_envhub_config_value,
+)
+from nepher_cli.envhub.config import (
     list_values as list_envhub_config_values,
+)
+from nepher_cli.envhub.config import (
     mask_secret as mask_envhub_config_secret,
+)
+from nepher_cli.envhub.config import (
     parse_config_value,
+)
+from nepher_cli.envhub.config import (
     reset_config as reset_envhub_config,
+)
+from nepher_cli.envhub.config import (
     set_value as set_envhub_config_value,
 )
 
@@ -44,7 +60,16 @@ def _headers(api_key: str | None) -> dict[str, str]:
 
 
 def _base() -> str:
-    return ENVHUB_BACKEND.rstrip("/")
+    """EnvHub API base, shared with the ``nepher`` CLI's ``api_url`` setting."""
+    return get_envhub_api_url() or ENVHUB_BACKEND.rstrip("/")
+
+
+def _env_id_or_exit(env_id: str) -> str:
+    try:
+        return safe_env_id(env_id)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1) from e
 
 
 @click.group("envhub")
@@ -146,6 +171,7 @@ def envhub_list(
 @envhub.command("download")
 @click.argument("env_id")
 @click.option("--cache-dir", type=click.Path(), default=None, help="Override local cache directory.")
+@click.option("--category", default=None, help="Use the category-specific cache directory from config.")
 @click.option("--force", is_flag=True, help="Re-download even if already cached.")
 @click.option(
     "--api-key",
@@ -155,7 +181,9 @@ def envhub_list(
     help="API key for authentication. Sent directly as X-API-Key so the "
     "download succeeds regardless of any cached access-token expiry.",
 )
-def envhub_download(env_id: str, cache_dir: str | None, force: bool, api_key: str | None) -> None:
+def envhub_download(
+    env_id: str, cache_dir: str | None, category: str | None, force: bool, api_key: str | None
+) -> None:
     """Download an environment bundle and cache it locally.
 
     The bundle is extracted to ~/.nepher/cache/<env_id>/ by default.
@@ -164,7 +192,8 @@ def envhub_download(env_id: str, cache_dir: str | None, force: bool, api_key: st
     is sent directly to EnvHub, which verifies it against account-backend — the
     download therefore works even if a previously cached JWT has expired.
     """
-    cache_root = resolve_cache_dir(cache_dir)
+    env_id = _env_id_or_exit(env_id)
+    cache_root = resolve_cache_dir(cache_dir, category=category)
     env_cache = cache_root / env_id
 
     if is_cached_env(env_cache) and not force:
@@ -174,31 +203,33 @@ def envhub_download(env_id: str, cache_dir: str | None, force: bool, api_key: st
     headers = _headers(api_key)
     url = f"{_base()}/api/v1/envs/{env_id}/download"
     console.print(f"Downloading [bold]{env_id}[/bold]...")
+    tmp_fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+    os.close(tmp_fd)
+    tmp_path = Path(tmp_name)
     try:
-        with httpx.stream("GET", url, headers=headers, timeout=600.0, follow_redirects=True) as r:
-            if r.status_code != 200:
-                body = r.read().decode(errors="replace")
-                console.print(f"[red]{parse_error_body(body) or body.strip() or f'HTTP {r.status_code}'}[/red]")
-                raise SystemExit(1)
+        try:
+            with httpx.stream("GET", url, headers=headers, timeout=600.0, follow_redirects=True) as r:
+                if r.status_code != 200:
+                    body = r.read().decode(errors="replace")
+                    console.print(f"[red]{parse_error_body(body) or body.strip() or f'HTTP {r.status_code}'}[/red]")
+                    raise SystemExit(1)
 
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-                for chunk in r.iter_bytes(chunk_size=65536):
-                    tmp.write(chunk)
-    except httpx.RequestError as e:
-        console.print(f"[red]Network error[/red]: {e}")
-        raise SystemExit(1) from e
+                with open(tmp_path, "wb") as tmp:
+                    for chunk in r.iter_bytes(chunk_size=1024 * 1024):
+                        tmp.write(chunk)
+        except httpx.HTTPError as e:
+            console.print(f"[red]Network error[/red]: {e}")
+            raise SystemExit(1) from e
 
-    console.print("Extracting bundle...")
-    env_cache.mkdir(parents=True, exist_ok=True)
-    try:
-        with zipfile.ZipFile(tmp_path, "r") as zf:
-            zf.extractall(env_cache)
-    except zipfile.BadZipFile:
-        console.print("[red]Downloaded file is not a valid ZIP archive.[/red]")
-        shutil.rmtree(env_cache, ignore_errors=True)
-        tmp_path.unlink(missing_ok=True)
-        raise SystemExit(1)
+        console.print("Extracting bundle...")
+        try:
+            extract_bundle(tmp_path, env_cache)
+        except zipfile.BadZipFile as e:
+            console.print("[red]Downloaded file is not a valid ZIP archive.[/red]")
+            raise SystemExit(1) from e
+        except (ValueError, OSError) as e:
+            console.print(f"[red]Invalid bundle[/red]: {e}")
+            raise SystemExit(1) from e
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -239,13 +270,11 @@ def envhub_upload(path: str, category: str, benchmark: bool, force: bool, thumbn
                 raise SystemExit(1)
             console.print("Zipping bundle...")
             tmp_fd, tmp_name = tempfile.mkstemp(suffix=".zip")
-            import os
             os.close(tmp_fd)
             tmp_zip = Path(tmp_name)
             with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-                for file in bundle_path.rglob("*"):
-                    if file.is_file():
-                        zf.write(file, file.relative_to(bundle_path))
+                for file, arcname in iter_bundle_files(bundle_path):
+                    zf.write(file, arcname.as_posix())
             upload_path = tmp_zip
         else:
             upload_path = bundle_path
@@ -257,15 +286,16 @@ def envhub_upload(path: str, category: str, benchmark: bool, force: bool, thumbn
         if force:
             data_fields["force"] = "true"
 
-        with open(upload_path, "rb") as f:
+        data_fields["duplicate_policy"] = "reject"
+        with contextlib.ExitStack() as stack:
+            f = stack.enter_context(open(upload_path, "rb"))
             files: dict[str, Any] = {"bundle": (upload_path.name, f, "application/zip")}
             if thumbnail:
                 thumb_path = Path(thumbnail)
                 suffix = thumb_path.suffix.lower()
                 content_type = "image/png" if suffix == ".png" else ("image/webp" if suffix == ".webp" else "image/jpeg")
-                files["thumbnail"] = (thumb_path.name, open(thumbnail, "rb"), content_type)
-
-            data_fields["duplicate_policy"] = "reject"
+                thumb_file = stack.enter_context(open(thumb_path, "rb"))
+                files["thumbnail"] = (thumb_path.name, thumb_file, content_type)
 
             try:
                 r = httpx.post(
@@ -275,7 +305,7 @@ def envhub_upload(path: str, category: str, benchmark: bool, force: bool, thumbn
                     files=files,
                     timeout=600.0,
                 )
-            except httpx.RequestError as e:
+            except httpx.HTTPError as e:
                 console.print(f"[red]Network error[/red]: {e}")
                 raise SystemExit(1) from e
 
@@ -325,15 +355,15 @@ def cache_clear(env_id: str | None, cache_dir: str | None) -> None:
     """Clear cache — all environments or a specific one."""
     root = resolve_cache_dir(cache_dir)
     if env_id:
-        target = root / env_id
+        target = root / _env_id_or_exit(env_id)
         if target.exists():
             shutil.rmtree(target)
             console.print(f"[green]Cleared cache for[/green] {env_id}")
         else:
             console.print(f"[yellow]{env_id} is not cached.[/yellow]")
     else:
-        if root.exists():
-            shutil.rmtree(root)
+        for entry in list_cached_env_dirs(root):
+            shutil.rmtree(entry)
         console.print("[green]Cleared all cached environments.[/green]")
 
 
@@ -363,14 +393,20 @@ def cache_info(cache_dir: str | None) -> None:
 @click.argument("new_path", type=click.Path())
 @click.option("--cache-dir", type=click.Path(), default=None)
 def cache_migrate(new_path: str, cache_dir: str | None) -> None:
-    """Move the local cache to a new directory."""
+    """Move cached environments to NEW_PATH and make it the configured cache_dir."""
     old_root = resolve_cache_dir(cache_dir)
-    new_root = Path(new_path)
-    if not old_root.exists():
-        console.print("[yellow]Nothing to migrate — cache is empty.[/yellow]")
+    new_root = Path(new_path).expanduser().resolve()
+    if new_root == old_root:
+        console.print("[dim]Cache is already at that location.[/dim]")
         return
-    new_root.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(old_root), str(new_root))
+    new_root.mkdir(parents=True, exist_ok=True)
+    for entry in list_cached_env_dirs(old_root):
+        target = new_root / entry.name
+        if target.exists():
+            console.print(f"[red]{target} already exists; aborting.[/red]")
+            raise SystemExit(1)
+        shutil.move(str(entry), str(target))
+    set_envhub_config_value("cache_dir", str(new_root))
     console.print(f"[green]Cache migrated to[/green] {new_root}")
 
 
@@ -402,8 +438,8 @@ def envhub_view(env_id: str, category: str | None, scene: str | None, cache_dir:
         )
         raise SystemExit(1)
 
-    root = resolve_cache_dir(cache_dir)
-    env_path = root / env_id
+    root = resolve_cache_dir(cache_dir, category=category)
+    env_path = root / _env_id_or_exit(env_id)
     if not is_cached_env(env_path):
         console.print(
             f"[yellow]{env_id} is not cached.[/yellow] "
@@ -412,7 +448,7 @@ def envhub_view(env_id: str, category: str | None, scene: str | None, cache_dir:
         raise SystemExit(1)
 
     try:
-        env = load_env(env_id, category)
+        env = load_env(env_id, category, cache_dir=root) if cache_dir else load_env(env_id, category)
     except Exception as e:
         console.print(f"[red]Failed to load environment[/red]: {e}")
         raise SystemExit(1) from e
@@ -428,8 +464,15 @@ def envhub_view(env_id: str, category: str | None, scene: str | None, cache_dir:
     console.print(f"Launching scene [bold]{scene}[/bold] in Isaac Sim...")
     # Actual rendering requires the full IsaacLab runtime; delegate back to the
     # installed nepher package's view script which handles AppLauncher setup.
-    import subprocess, sys
-    subprocess.run([sys.executable, "-m", "nepher", "view", env_id, "--scene", scene], check=False)
+    import subprocess
+    import sys
+
+    cmd = [sys.executable, "-m", "nepher", "view", env_id, "--scene", scene]
+    if category:
+        cmd += ["--category", category]
+    if cache_dir:
+        cmd += ["--cache-dir", str(root)]
+    raise SystemExit(subprocess.run(cmd, check=False).returncode)
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +502,11 @@ def config_get(key: str) -> None:
 def config_set(key: str, value: str) -> None:
     """Set a configuration value."""
     parsed = parse_config_value(value)
-    set_envhub_config_value(key, parsed)
+    try:
+        set_envhub_config_value(key, parsed)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1) from e
     display = mask_envhub_config_secret(key, parsed) if isinstance(parsed, str) else parsed
     console.print(f"[green]Set[/green] {key} = {display}")
 
