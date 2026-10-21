@@ -1,125 +1,120 @@
+<div align="center">
+
 # nepher-cli
 
-The unified CLI for [Nepher Robotics](https://nepher.ai) — accounts, hackathons, EnvHub, tournaments, and SimStore from a single tool.
+**The unified CLI for [Nepher Robotics](https://nepher.ai): accounts, tournaments, hackathons, EnvHub and SimStore.**
 
-**Requires:** Python 3.10+
+[![PyPI](https://img.shields.io/pypi/v/nepher-cli)](https://pypi.org/project/nepher-cli/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](#license)
+
+[Install](#install) •
+[Commands](#commands) •
+[Tournaments](#tournaments) •
+[EnvHub](#envhub) •
+[Hackathons](#hackathons) •
+[Account](#account) •
+[Troubleshooting](#troubleshooting)
+
+</div>
+
+---
 
 ## Install
 
 ```bash
 pip install nepher-cli
+pip install "nepher-cli[bittensor]"   # adds wallet signing for tournament submit and coldkey registration
 ```
 
-Both `npcli` and `nepher-cli` entry points are registered after install.
+This installs two equivalent commands, `npcli` and `nepher-cli`.
 
-```bash
-npcli --version
-npcli --help
-```
-
-## Commands
-
-| Command / Group | Description |
-|-----------------|-------------|
-| `npcli login` | Log in with a Nepher API key |
-| `npcli whoami` | Show the currently authenticated user |
-| `npcli logout` | Clear locally stored credentials |
-| `npcli account` | API keys and coldkey registration |
-| `npcli tournament` | Browse tournaments, submit agents, leaderboards |
-| `npcli envhub` | Manage Isaac Lab environment bundles |
-| `npcli hackathon` | Browse and submit to hackathons |
-| `npcli simstore` | SimStore marketplace *(coming soon)* |
-
-## Quick Start
-
-### Authenticate
+## Quick start
 
 ```bash
 npcli login --api-key nepher_xxxxxxxx
 npcli whoami
-npcli logout
+npcli --help
 ```
 
-Get your API key at [nepher.ai/account](https://nepher.ai/account) → Account → API Keys.  
-For CI/CD, set `NEPHER_API_KEY=nepher_xxxxxxxx` instead of logging in.
+Get your API key at [nepher.ai/account](https://nepher.ai/account) under **API Keys**. In CI/CD, set `NEPHER_API_KEY` instead of logging in.
 
-### Tournaments
+## Commands
+
+| Command | Description |
+|---|---|
+| `npcli login` / `whoami` / `logout` | Manage authentication |
+| `npcli account` | API keys and coldkey registration |
+| `npcli tournament` | Browse tournaments, check and submit agents, view leaderboards |
+| `npcli envhub` | Manage Isaac Lab environment bundles |
+| `npcli hackathon` | Browse and submit to hackathons |
+| `npcli simstore` | SimStore marketplace (coming soon) |
+
+Run any command with `--help` for all options.
+
+## Tournaments
 
 ```bash
-npcli tournament list
-npcli tournament list-active
+npcli tournament list                  # or list-active
 npcli tournament status <tournament_id>
 npcli tournament leaderboard <tournament_id>
-```
-
-Check your agent directory structure (no extra dependencies needed):
-
-```bash
 npcli tournament check --path ./my-agent
-npcli tournament check --path ./my-agent --verbose   # also show recommended-file warnings
-```
-
-Submit an agent (requires `bittensor-wallet` for wallet signing):
-
-```bash
-pip install bittensor-wallet
-# or: pip install "nepher-cli[bittensor]"
-```
-
-```bash
 npcli tournament submit --path ./my-agent --wallet-name miner --wallet-hotkey default
 ```
 
-Full options for `submit`:
+`check` validates the agent directory (add `--verbose` for recommended-file warnings). `submit` requires `bittensor-wallet`.
 
-```
---path <path>               Agent directory
---wallet-name <str>         Bittensor wallet name (default: miner)
---wallet-hotkey <str>       Bittensor wallet hotkey (default: default)
---api-key <key>             Nepher API key (falls back to stored credentials)
---tournament-id <id>        Target tournament ID (required when multiple are active)
---api-url <url>             Override tournament API URL
--v / --verbose              Verbose output
-```
+<details>
+<summary>Full <code>tournament submit</code> options</summary>
 
-### EnvHub
+| Option | Description |
+|---|---|
+| `--path <path>` | Agent directory |
+| `--wallet-name <str>` | Bittensor wallet name (default: `miner`) |
+| `--wallet-hotkey <str>` | Bittensor wallet hotkey (default: `default`) |
+| `--api-key <key>` | Nepher API key (falls back to stored credentials) |
+| `--tournament-id <id>` | Target tournament, required when several are active |
+| `--api-url <url>` | Override the tournament API URL |
+| `-v`, `--verbose` | Verbose output |
+
+</details>
+
+## EnvHub
 
 ```bash
 npcli envhub list
 npcli envhub download <env_id>
 npcli envhub upload ./my-bundle --category navigation
-npcli envhub cache list
-npcli envhub cache info
-npcli envhub cache clear
+npcli envhub cache list | info | clear
 ```
 
-### Hackathons
+Shares login, API and cache with the standalone [`nepher`](https://github.com/nepher-ai/envhub) package.
+
+## Hackathons
 
 ```bash
 npcli hackathon list
-
-npcli hackathon submit \
-  --title "My entry" \
-  --submission ./my-project \
-  --assets ./my-assets
+npcli hackathon submit --title "My entry" --submission ./my-project --assets ./my-assets
 ```
 
-Full options:
+<details>
+<summary>Full <code>hackathon submit</code> options</summary>
 
-```
---hackathon-id <uuid>       Required when multiple hackathons are open
---title <str>               Entry title
---description <markdown>    Entry description
---thumbnail <file>          Cover image (JPEG, PNG, WebP, GIF)
---submission <path>         Project folder or submission.zip
---assets <path>             Assets folder or assets.zip (images, videos, PDFs)
---public-source             Mark source as public
-```
+| Option | Description |
+|---|---|
+| `--hackathon-id <uuid>` | Required when several hackathons are open |
+| `--title <str>` | Entry title |
+| `--description <markdown>` | Entry description |
+| `--thumbnail <file>` | Cover image (JPEG, PNG, WebP, GIF) |
+| `--submission <path>` | Project folder or `submission.zip` |
+| `--assets <path>` | Assets folder or `assets.zip` (images, videos, PDFs) |
+| `--public-source` | Mark source as public |
 
-### API Keys
+</details>
 
-`list` / `create` / `revoke` need a **JWT session** from `npcli account login`.  
-Do **not** pass `--api-key` on these commands (that flag sends `X-API-Key`, which the account API rejects for key management).
+## Account
+
+API key management needs a session from `npcli account login`. Don't pass `--api-key` to the `api-keys` commands; the account API rejects `X-API-Key` for key management.
 
 ```bash
 npcli account login --api-key nepher_...
@@ -128,45 +123,27 @@ npcli account api-keys create --name "CI key" --platform hackathon
 npcli account api-keys revoke <key_id>
 ```
 
-### Coldkey Registration
-
-Bind a Bittensor coldkey to your account (requires `bittensor-wallet`; `btcli` is optional fallback):
+Bind a Bittensor coldkey to your account (requires `bittensor-wallet`; `btcli` is not needed):
 
 ```bash
-pip install bittensor-wallet
 npcli account register-coldkey --wallet <wallet_name>
 ```
 
-Signing uses the local coldkey via `bittensor-wallet` and does not import `btcli`. If you still have a mixed Bittensor venv (`scalecodec` + `cyscale`), `register-coldkey` keeps working as long as `bittensor-wallet` is installed.
-
-## API Key Requirements
-
-- Must start with `nepher_`
-- Must be active and not expired
-- `hackathon submit` requires **Hackathon** scope (or an unrestricted key)
-- `tournament submit` requires **Tournament** scope (or an unrestricted key)
+Keys must start with `nepher_` and be active. `hackathon submit` needs Hackathon scope and `tournament submit` needs Tournament scope, or use an unrestricted key.
 
 ## Troubleshooting
 
 | Error | Fix |
-|-------|-----|
-| `npcli: command not found` | Ensure `pip install` succeeded and Python scripts dir is on `PATH` |
-| `invalid api key format` | Key must start with `nepher_` |
-| `api key does not have hackathon access` | Enable Hackathon scope or use an unrestricted key |
-| `api key expired` | Run `npcli account api-keys create` |
-| `Several hackathons are accepting submissions` | Re-run with `--hackathon-id` |
-| `bittensor-wallet not installed` | `pip install bittensor-wallet` (needed for `tournament submit` and `account register-coldkey`) |
+|---|---|
+| `npcli: command not found` | Check the install succeeded and Python's scripts directory is on `PATH` |
 | `Not logged in` | `npcli login --api-key nepher_...` |
-| `Conflict detected: 'scalecodec' ... conflicts with 'cyscale'` | Leftover `scalecodec` after a Bittensor upgrade. Prefer `pip install bittensor-wallet` so npcli never needs `btcli`. To repair `btcli` itself: `pip uninstall scalecodec cyscale -y && pip install -U cyscale --force-reinstall` |
-
-Run any command with `--help` for full flag details:
-
-```bash
-npcli --help
-npcli hackathon submit --help
-npcli tournament submit --help
-```
+| `invalid api key format` | Key must start with `nepher_` |
+| `api key expired` | Create a new key with `npcli account api-keys create` |
+| `api key does not have hackathon access` | Enable Hackathon scope or use an unrestricted key |
+| `Several hackathons are accepting submissions` | Re-run with `--hackathon-id` |
+| `bittensor-wallet not installed` | `pip install bittensor-wallet` |
+| `Conflict detected: 'scalecodec' ... 'cyscale'` | Leftover `scalecodec` from a Bittensor upgrade. Install `bittensor-wallet` so npcli doesn't need `btcli`, or repair `btcli` with `pip uninstall scalecodec cyscale -y && pip install -U cyscale --force-reinstall` |
 
 ## License
 
-MIT
+MIT © 2026 Nepher Robotics
