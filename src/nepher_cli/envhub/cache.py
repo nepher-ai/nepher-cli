@@ -24,11 +24,16 @@ def resolve_cache_dir(cache_dir: str | Path | None = None, category: str | None 
     if cache_dir:
         return Path(cache_dir).expanduser().resolve()
 
+    # Read the env var directly: an already-initialised ``nepher`` config may
+    # predate it. Category-specific cache_dir still wins, as in ``nepher``.
+    env_override = os.getenv("NEPHER_CACHE_DIR")
+    if env_override and not category:
+        return Path(env_override).expanduser().resolve()
+
     nepher_dir = _nepher_cache_dir(category)
     if nepher_dir is not None:
         return nepher_dir
 
-    env_override = os.getenv("NEPHER_CACHE_DIR")
     if env_override:
         return Path(env_override).expanduser().resolve()
 
@@ -50,7 +55,7 @@ def is_cached_env(path: Path) -> bool:
 
 
 def list_cached_env_dirs(root: Path) -> list[Path]:
-    """List cached environment directories under ``root``."""
+    """List cached environment directories under ``root`` (skips in-progress staging dirs)."""
     if not root.exists():
         return []
-    return sorted(p for p in root.iterdir() if is_cached_env(p))
+    return sorted(p for p in root.iterdir() if not p.name.startswith(".") and is_cached_env(p))
