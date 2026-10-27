@@ -49,6 +49,13 @@ from nepher_cli.envhub.config import (
 
 console = Console(stderr=True)
 
+# A numeric write timeout switches the SSL socket into timeout mode. On Windows
+# that makes OpenSSL raise SSLWantWriteError as soon as the TCP window fills,
+# which requests/httpcore surface as a failed upload ("Max retries exceeded"
+# / SSLWantWriteError) instead of waiting for the server to read. Leave the
+# write unbounded; bound connect and the wait for the upload response.
+_UPLOAD_TIMEOUT = httpx.Timeout(connect=30.0, read=3600.0, write=None, pool=30.0)
+
 
 def _headers(api_key: str | None) -> dict[str, str]:
     h = get_auth_headers(api_key)
@@ -303,7 +310,7 @@ def envhub_upload(path: str, category: str, benchmark: bool, force: bool, thumbn
                     headers=headers,
                     data=data_fields,
                     files=files,
-                    timeout=600.0,
+                    timeout=_UPLOAD_TIMEOUT,
                 )
             except httpx.HTTPError as e:
                 console.print(f"[red]Network error[/red]: {e}")
