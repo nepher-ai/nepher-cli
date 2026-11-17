@@ -60,9 +60,19 @@ npcli tournament status <tournament_id>
 npcli tournament leaderboard <tournament_id>
 npcli tournament check --path ./my-agent
 npcli tournament submit --path ./my-agent --wallet-name miner --wallet-hotkey default
+npcli tournament submit --path ./my-agent --pay-with alpha   # pay the Nepher alpha curve
 ```
 
 `check` validates the agent directory (add `--verbose` for recommended-file warnings). `submit` requires `bittensor-wallet`.
+
+Each upload is charged from your [Account → Billing](https://account.nepher.ai) balance. `--pay-with` chooses the asset (default `tao`). Both assets use an admin min/max decay curve: the first upload in a tournament costs the minimum, and each later upload starts at the maximum and decays toward the minimum. The two balances are separate.
+
+| Asset | How to fund it | Fee |
+|---|---|---|
+| TAO | Transfer TAO from your registered coldkey to the treasury | TAO min, max, and decay |
+| Nepher alpha | Same-subnet stake transfer (`transfer_stake`) to the treasury on subnet 49 | Alpha min, max, and decay |
+
+Register the coldkey first with `npcli account register-coldkey`. Deposits from any other key are ignored. Refresh Billing after the transfer so the balance is credited, then submit. Alpha payment is off while both alpha bounds are 0. The TAO deposit bonus does not apply to alpha. `--pay-with alpha` requires **nepher-cli 0.2.9** or newer (`pip install -U nepher-cli`).
 
 <details>
 <summary>Full <code>tournament submit</code> options</summary>
@@ -74,6 +84,7 @@ npcli tournament submit --path ./my-agent --wallet-name miner --wallet-hotkey de
 | `--wallet-hotkey <str>` | Bittensor wallet hotkey (default: `default`) |
 | `--api-key <key>` | Nepher API key (falls back to stored credentials) |
 | `--tournament-id <id>` | Target tournament, required when several are active |
+| `--pay-with tao\|alpha` | Balance that pays the fee (default: `tao`) |
 | `--api-url <url>` | Override the tournament API URL |
 | `-v`, `--verbose` | Verbose output |
 
