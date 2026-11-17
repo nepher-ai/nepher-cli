@@ -513,6 +513,14 @@ def tournament_check(agent_path: str, verbose: bool) -> None:
 )
 @click.option("--api-url", default=None, help=f"Tournament API URL (default: {TOURNAMENT_BACKEND}).")
 @click.option("--tournament-id", default=None, help="Target tournament ID (required when multiple are active).")
+@click.option(
+    "--pay-with",
+    "payment_asset",
+    type=click.Choice(["tao", "alpha"], case_sensitive=False),
+    default="tao",
+    show_default=True,
+    help="Pay the submission fee in TAO or Nepher alpha. Each asset has its own min/max decay curve.",
+)
 @click.option("--verbose", "-v", is_flag=True)
 def tournament_submit(
     agent_path: str,
@@ -521,6 +529,7 @@ def tournament_submit(
     api_key: str | None,
     api_url: str | None,
     tournament_id: str | None,
+    payment_asset: str,
     verbose: bool,
 ) -> None:
     """Submit a trained agent to Bittensor Subnet 49 tournaments.
@@ -578,22 +587,36 @@ def tournament_submit(
                     signature=signature,
                     file_size=file_size,
                     tournament_id=tournament_id,
+                    payment_asset=payment_asset.lower(),
                 )
                 resolved_tournament_id = token_data["tournament_id"]
                 upload_token = token_data["upload_token"]
 
-                fee = token_data.get("submission_fee_tao")
+                pay_with = (token_data.get("payment_asset") or payment_asset or "tao").lower()
+                if pay_with == "alpha":
+                    fee = token_data.get("submission_fee_alpha")
+                    unit = "alpha"
+                else:
+                    fee = token_data.get("submission_fee_tao")
+                    unit = "TAO"
                 if fee is not None:
                     console.print(
-                        f"Submission fee: [bold]{fee} TAO[/bold] "
+                        f"Submission fee: [bold]{fee} {unit}[/bold] "
                         f"(debited from platform balance on upload)"
                     )
-                    fee_min = token_data.get("submission_fee_min_tao")
-                    fee_max = token_data.get("submission_fee_max_tao")
-                    fee_dur = token_data.get("submission_fee_duration_hours")
+                    if pay_with == "alpha":
+                        fee_min = token_data.get("submission_fee_min_alpha")
+                        fee_max = token_data.get("submission_fee_max_alpha")
+                        fee_dur = token_data.get("submission_fee_alpha_duration_hours")
+                        curve_unit = "alpha"
+                    else:
+                        fee_min = token_data.get("submission_fee_min_tao")
+                        fee_max = token_data.get("submission_fee_max_tao")
+                        fee_dur = token_data.get("submission_fee_duration_hours")
+                        curve_unit = "TAO"
                     if fee_min is not None and fee_max is not None:
                         console.print(
-                            f"  [dim]Fee curve: {fee_max} → {fee_min} TAO"
+                            f"  [dim]Fee curve: {fee_max} → {fee_min} {curve_unit}"
                             + (f" over {fee_dur}h" if fee_dur is not None else "")
                             + "[/dim]"
                         )
@@ -612,13 +635,19 @@ def tournament_submit(
                 except tournament_api.UploadChargeError as e:
                     console.print(f"[red]Submission fee failed:[/red] {e}")
                     console.print(
-                        "  Check balance with [bold]npcli account balance[/bold], "
-                        "then deposit TAO on Account → Billing."
+                        "  Check balance on Account → Billing. "
+                        "TAO is a deposit; Nepher alpha is a same-subnet stake transfer to the treasury."
                     )
                     return 1
 
                 agent_id = upload_result["agent_id"]
-                charged = upload_result.get("submission_fee_tao")
+                charged_asset = (upload_result.get("payment_asset") or pay_with or "tao").lower()
+                charged = (
+                    upload_result.get("submission_fee_alpha")
+                    if charged_asset == "alpha"
+                    else upload_result.get("submission_fee_tao")
+                )
+                charged_unit = "alpha" if charged_asset == "alpha" else "TAO"
 
             t_title = _tournament_title(token_data)
             t_task = _tournament_task_name(token_data)
@@ -628,7 +657,7 @@ def tournament_submit(
             console.print(f"  Agent ID     : [bold]{agent_id}[/bold]")
             console.print(f"  Tournament ID: [bold]{resolved_tournament_id}[/bold]")
             if charged is not None:
-                console.print(f"  Fee charged  : [bold]{charged} TAO[/bold]")
+                console.print(f"  Fee charged  : [bold]{charged} {charged_unit}[/bold]")
             if t_title and t_title != "—":
                 console.print(f"  Title        : {t_title}")
             if t_task and t_task != "—":

@@ -52,6 +52,7 @@ async def request_upload_token(
     signature: str,
     file_size: int,
     tournament_id: str | None = None,
+    payment_asset: str | None = None,
 ) -> dict[str, Any]:
     """POST /api/v1/agents/upload/verify → parsed JSON token dict.
 
@@ -66,6 +67,8 @@ async def request_upload_token(
     }
     if tournament_id is not None:
         body["tournament_id"] = tournament_id
+    if payment_asset:
+        body["payment_asset"] = payment_asset
 
     url = f"{api_url.rstrip('/')}/api/v1/agents/upload/verify"
     async with httpx.AsyncClient(
@@ -113,5 +116,7 @@ async def upload_agent(
     return {
         "agent_id": str(agent_id),
         "submission_fee_tao": data.get("submission_fee_tao"),
+        "submission_fee_alpha": data.get("submission_fee_alpha"),
+        "payment_asset": data.get("payment_asset"),
         "raw": data,
     }
